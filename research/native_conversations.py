@@ -8,27 +8,32 @@ import time
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 import httpx
 from research_providers import authorize, collect_media_run, MediaPending, ProviderNotConfigured,cached_collection,gemini_post
 
 
-QUERY_POLICY=8
+QUERY_POLICY=9
 PLAN_POLICY=3
+CONVERSATION_DAYS=30
 
 
 class ConversationUnavailable(Exception):
     """A collection failure must not masquerade as an empty search."""
 
 
-def collector(platform):
+def collector(platform,*,x_adapter=None):
     if platform=='Reddit':
         choice=os.environ.get('OUTLOUD_REDDIT_COLLECTOR','mineworks')
         if choice=='mineworks':return 'themineworks~reddit-scraper','native-reddit-v1:',.50
         if choice=='harshmaur':return 'harshmaur~reddit-scraper','native-reddit-harshmaur-v1:',.10
         raise ValueError('Unsupported Reddit collector.')
-    choice=os.environ.get('OUTLOUD_X_COLLECTOR','atomus')
+    choice=x_adapter or os.environ.get('OUTLOUD_X_COLLECTOR','atomus')
     if choice=='atomus':return 'atomus~twitter-scraper','native-x-v1:',.10
     if choice=='raven':return 'pro100chok~x-twitter-all-in-one-scraper','native-x-raven-v1:',.01
+    if choice=='apidojo':return 'apidojo~twitter-scraper-lite','native-x-apidojo-v1:',.10
+    if choice=='scrapesmith':return 'scrapesmith~x-twitter-search-scraper','native-x-scrapesmith-v1:',.10
+    if choice=='xquik':return 'xquik~x-tweet-scraper','native-x-xquik-v1:',.10
     raise ValueError('Unsupported X collector.')
 
 
@@ -41,10 +46,18 @@ def check_collection(rows,platform):
         raise ConversationUnavailable(platform+' collection failed at the provider; this is not an empty search.')
 
 
-def check_recent_quota(db,platform):
+def credential_fingerprint():
+    token=os.environ.get('APIFY_TOKEN')
+    return hashlib.sha256(token.encode()).hexdigest() if token else None
+
+
+def check_recent_quota(db,platform,prefix=None):
     month=datetime.now(timezone.utc).replace(day=1,hour=0,minute=0,second=0,microsecond=0).timestamp()
-    prefix=collector(platform)[1]
-    for prior, in db.execute('SELECT rows FROM media_jobs WHERE key LIKE ? AND created>=? AND rows IS NOT NULL',(prefix+'%',month)):
+    prefix=prefix or collector(platform)[1]
+    fingerprint=credential_fingerprint()
+    for run,prior in db.execute('SELECT run,rows FROM media_jobs WHERE key LIKE ? AND created>=? AND rows IS NOT NULL',(prefix+'%',month)):
+        if json.loads(run).get('credential_fingerprint')!=fingerprint:
+            continue
         failures=json.loads(prior)
         if any(isinstance(row,dict) and row.get('error_kind')=='free_tier_limit' for row in failures):
             check_collection(failures,platform)
@@ -71,7 +84,11 @@ def compile_query(phrases,platform):
     return query
 
 
-def queries_for(project,platform='X'):
+def initial_query_limit():
+    return max(1,min(3,int(os.environ.get('OUTLOUD_NATIVE_CONVERSATION_QUERY_LIMIT','3'))))
+
+
+def queries_for(project,platform='X',*,x_adapter=None):
     """Three distinct cached searches, planned once from the product job.
 
     Planning does not authorize collection. Every started query still reserves
@@ -84,39 +101,34 @@ def queries_for(project,platform='X'):
     if path.exists():
         with sqlite3.connect(path,timeout=15) as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'").fetchone():
-                check_recent_quota(db,platform)
-    # Native search works best with the words the user actually supplied,
-    # rather than long invented workflow sentences or nested Boolean trees.
-    # Prefer a short keyword grounded in the product text. Relevance/need
-    # evidence is still evaluated independently for every returned post.
+                check_recent_quota(db,platform,collector(platform,x_adapter=x_adapter)[1])
+    # Prefer separate concrete phrases grounded in the brief. Brand names
+    # and generic intent suffixes are not substitutes for a customer task.
     from product_profile import terms
-    context_terms=terms(' '.join([project.name,project.description,project.problem,project.audience])) if hasattr(project,'name') else set()
-    seeds=[]
-    for value in getattr(project,'keywords',[]):
-        if isinstance(value,str) and re.fullmatch(r"[\w '-]{2,80}",value) and 1<=len(value.split())<=3:
-            overlap=len(terms(value)&context_terms)
-            if overlap:seeds.append((overlap,len(value.split()),value.strip()))
-    if seeds:
-        root=max(seeds,key=lambda item:(item[0],item[1]))[2]
-        suffixes=('help','recommendation','app') if platform=='Reddit' else ('help','recommend','app')
-        queries = [root + ' ' + suffix for suffix in suffixes]
-        # Use the second search to hear about a named product's alternatives
-        # or a distinct customer task. Repeating the same broad topic with
-        # different help words often returns the same advice and promotions.
-        names = (name.strip() for value in getattr(project, 'competitors', []) or [] for name in value.split(','))
-        competitor = next((name for name in names if re.fullmatch(r"[A-Za-z0-9][\w -]{1,59}", name)
-                           and name.casefold() != project.name.casefold()), None)
-        if competitor:
-            queries[1] = competitor + ' alternative'
-        else:
-            root_terms = terms(root)
-            alternative = next((value for overlap, _, value in sorted(seeds, reverse=True)
-                                if overlap >= 2 and not (terms(value) <= root_terms)), None)
-            if alternative:
-                queries[1] = alternative + ' recommendation'
-        return queries
-    cache_field='native_'+platform.lower()+'_query_plan'
+    context=research_context(project) if hasattr(project,'name') else {}
     model=cached_model(project) or {}
+    grounded=terms(' '.join(str(context.get(field,'')) for field in ('product_job','customer_problem','publisher_context')))
+    candidates=[]
+    if grounded:
+        phrases=[*getattr(project,'keywords',[]),*model.get('adjacent_topics',[])]
+        for sentence in model.get('conversations',[]):
+            words=re.findall(r"[\w'-]+",sentence)
+            phrases.extend(' '.join(words[i:i+2]) for i in range(len(words)-1)
+                           if len(terms(' '.join(words[i:i+2])))==2)
+        for value in phrases:
+            words=terms(value)
+            if (not re.fullmatch(r"[\w '-]{4,80}",value) or not 2<=len(value.split())<=4
+                or len(words&grounded)<2 or words<= {'technical','analysis','habit','tracker','app','software','tool','application','desktop','native'}):
+                continue
+            if any(words<=existing or existing<=words for _,existing in candidates):continue
+            candidates.append((value.strip(),words))
+    if len(candidates)>=3:
+        return [value for value,_ in candidates[:3]]
+    from native_collection import activity_phrases
+    seeds=list(dict.fromkeys([*(value for value,_ in candidates),*activity_phrases(project,model)]))
+    if len(seeds)>=3:
+        return seeds[:3]
+    cache_field='native_'+platform.lower()+'_query_plan'
     if model.get(cache_field) and model.get(cache_field+'_policy')==QUERY_POLICY and model.get(cache_field+'_plan_policy')==PLAN_POLICY:
         queries=model[cache_field]
         if not isinstance(queries,list) or len(queries)!=3:raise ValueError('Incomplete native conversation plan.')
@@ -186,43 +198,75 @@ def activity_scope(phrases):
     return '('+' OR '.join('"'+word+'"' for word in words[:12])+')'
 
 
+def query_yield(collections, checked, selected):
+    """Report native conversation query performance without storing source tags."""
+    ignored={source['id'] for source in checked if (source.get('evaluation') or {}).get('intent')=='irrelevant'}
+    accepted={source['id'] for source in selected if source.get('intent')=='conversations'}
+    output=[]
+    for collection in collections:
+        details={key:collection[key] for key in ('query','seed_url') if key in collection}
+        if not details:continue
+        identifiers=set(collection.get('source_ids',[]))
+        output.append({**details,'platform':collection['platform'],
+                       'returned':collection['returned'],'irrelevant':len(identifiers&ignored),
+                       'accepted':len(identifiers&accepted),'status':collection['status']})
+    return output
+
+
 def query_for(project,platform='X'):
     """Compatibility for single-query diagnostics; production uses queries_for."""
     return queries_for(project,platform)[0]
 
 
-def search_input(query, limit=20, platform='X'):
+def candidate_limit(platform,*,x_adapter=None):
+    adapter=x_adapter or os.environ.get('OUTLOUD_X_COLLECTOR')
+    return 60 if platform=='X' and adapter=='xquik' else 20
+
+
+def search_input(query, limit=20, platform='X',*,x_adapter=None):
     if not isinstance(query,str) or not 4<=len(query.strip())<=600:
         raise ValueError('A bounded public search query is required.')
-    if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=20:
-        raise ValueError('Native conversation search is limited to twenty posts.')
+    if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=candidate_limit(platform,x_adapter=x_adapter):
+        raise ValueError('Native conversation search exceeds its bounded result limit.')
     if platform=='Reddit' and os.environ.get('OUTLOUD_REDDIT_COLLECTOR','mineworks')=='harshmaur':
-        return {'searchTerms':[query.strip()],'searchPosts':True,'searchComments':False,
-                'searchCommunities':False,'searchSort':'new','searchTime':'week','postedAfter':'7 days',
-                'maxPostsCount':limit,'maxCommentsCount':0,'maxCommentsPerPost':0,
-                'crawlCommentsPerPost':False,'includeNSFW':False}
-    if platform=='Reddit':return {'mode':'search','searchQuery':query.strip(),'sortBy':'top','timeframe':'week','maxPosts':limit,'includeComments':False}
+        scoped=re.fullmatch(r'subreddit:([A-Za-z0-9_]{2,40}) (.+)',query.strip())
+        search=scoped[2] if scoped else query.strip()
+        payload={'searchTerms':[search],'searchPosts':True,'searchComments':False,
+                 'searchCommunities':False,'searchSort':'relevance' if scoped else 'new',
+                 'searchTime':'month','postedAfter':'30 days','maxPostsCount':limit,
+                 'maxCommentsCount':0,'maxCommentsPerPost':0,'crawlCommentsPerPost':False,'includeNSFW':False}
+        if scoped:payload['withinCommunity']=scoped[1]
+        return payload
+    if platform=='Reddit':return {'mode':'search','searchQuery':query.strip(),'sortBy':'new','timeframe':'month','maxPosts':limit,'includeComments':False}
     if platform!='X':raise ValueError('Unsupported conversation platform.')
-    if os.environ.get('OUTLOUD_X_COLLECTOR','atomus')=='raven':
+    adapter=x_adapter or os.environ.get('OUTLOUD_X_COLLECTOR','atomus')
+    if adapter=='xquik':
+        earliest=(datetime.now(timezone.utc)-timedelta(days=CONVERSATION_DAYS)).date().isoformat()
+        return {'twitterContent':query.strip()+' since:'+earliest+' lang:en','maxItems':limit}
+    if adapter in ('apidojo','scrapesmith'):
+        earliest=(datetime.now(timezone.utc)-timedelta(days=CONVERSATION_DAYS)).date().isoformat()
+        return {'searchTerms':[query.strip()+' since:'+earliest],'maxItems':limit,
+                'sort':'Top' if adapter=='apidojo' else 'Latest','tweetLanguage':'en'}
+    if adapter=='raven':
         return {'scrapeType':'search','targets':[query.strip()],'maxItems':limit,'searchType':'latest',
-                'start':(datetime.now(timezone.utc)-timedelta(days=7)).date().isoformat(),
+                'start':(datetime.now(timezone.utc)-timedelta(days=30)).date().isoformat(),
                 'tweetLanguage':'en','excludeReposts':True,'findEmails':False,'includeAbout':False}
     collector(platform)
     return {'searchType':'search','searchQuery':query.strip(),'sortOrder':'Latest',
-            'since':(datetime.now(timezone.utc)-timedelta(days=7)).date().isoformat(),
+            'since':(datetime.now(timezone.utc)-timedelta(days=30)).date().isoformat(),
             'maxItems':limit,'language':'en'}
 
 
-def normalize(rows,platform='X'):
+def normalize(rows,platform='X',limit=20):
     from live_discovery import post_identity
     sources=[]
-    for row in rows[:20]:
-        if not isinstance(row,dict) or row.get('error'):continue
+    for row in rows[:limit]:
+        if not isinstance(row,dict) or row.get('error') or row.get('isAd') is True or row.get('isRetweet') is True:continue
         permalink=row.get('permalink')
         original='https://www.reddit.com'+permalink if platform=='Reddit' and isinstance(permalink,str) and permalink.startswith('/r/') else row.get('postUrl') or row.get('url','')
         identity=post_identity(original)
         if platform=='Reddit' and row.get('dataType') not in (None,'post'):continue
-        text=(row.get('body') or row.get('selftext') or '') if platform=='Reddit' else row.get('text')
+        text=(row.get('body') or row.get('selftext') or '') if platform=='Reddit' else (row.get('fullText') or row.get('text'))
         # A concise question may exist entirely in a self-post title.
         if platform=='Reddit' and isinstance(text,str) and len(text.strip())<20:
             text=(str(row.get('title') or '')+' '+text).strip()
@@ -251,34 +295,53 @@ def normalize(rows,platform='X'):
             if isinstance(value,int) and not isinstance(value,bool) and value>=0:metrics[key]=value
         sources.append({'id':'live-'+hashlib.sha256(identity[1].encode()).hexdigest()[:20],
             'platform':platform,'kind':'Post','title':str(row.get('title') or text.strip().split('\n')[0])[:180],
-            'summary':text.strip()[:8000],'url':identity[1],'author':str(row.get('authorName') or row.get('author') or 'Reddit author') if platform=='Reddit' else author.get('screen_name') or author.get('username') or 'X author',
+            'summary':text.strip()[:8000],'url':identity[1],'author':str(row.get('authorName') or row.get('author') or 'Reddit author') if platform=='Reddit' else (author.get('screen_name') or author.get('username') or author.get('userName') or urlsplit(identity[1]).path.split('/')[1]),
             'published_at':published,'metrics':metrics,'section':'conversations','competitor':False,
             'tone':'cream','matched_terms':[],
             'evidence':{'type':'original_platform_post','provider':'apify','data_source':row.get('data_source','native'),'engagement_verified':len(metrics)>2}})
     return sources
 
 
-def discover(query,limit=20,wait_seconds=0,platform='X'):
-    payload=search_input(query,limit,platform)
-    actor,prefix,cap=collector(platform)
-    key=prefix+hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
+def discover(query,limit=20,wait_seconds=0,platform='X',*,x_adapter=None):
+    payload=search_input(query,limit,platform,x_adapter=x_adapter)
+    return collect_discussions(payload,limit,wait_seconds,platform,collector(platform,x_adapter=x_adapter))
+
+
+def discover_replies(url,limit=20,wait_seconds=0):
+    from live_discovery import post_identity
+    identity=post_identity(url)
+    if (not identity or identity[0]!='X' or not re.fullmatch(r'https://(?:x|twitter)\.com/[A-Za-z0-9_]+/status/\d+/',identity[1])
+        or isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=20):
+        raise ValueError('A public X post and a bounded reply limit are required.')
+    original=identity[1]
+    root=original.rstrip('/').split('/')[-1]
+    payload={'scrapeType':'postDetail','targets':[original],'includeReplies':True,
+             'maxItems':limit,'findEmails':False,'includeAbout':False}
+    provider=('pro100chok~x-twitter-all-in-one-scraper','native-x-raven-thread-v1:',.01)
+    return collect_discussions(payload,limit,wait_seconds,'X',provider,root=root)
+
+
+def collect_discussions(payload,limit,wait_seconds,platform,provider,*,root=None):
+    actor,prefix,cap=provider
+    fingerprint=credential_fingerprint()
+    digest=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
+    key=prefix+digest+(':'+fingerprint if fingerprint else '')
     path=Path(os.environ.get('OUTLOUD_PROVIDER_CACHE',str(Path(__file__).parent/'.data/provider-media.sqlite3')))
     def start():
         with sqlite3.connect(path,timeout=15) as db:
             # Provider quotas apply to the account, not the query. Reuse the
             # original failure until its monthly reset instead of paying for
             # another doomed run for each new product.
-            check_recent_quota(db,platform)
+            check_recent_quota(db,platform,prefix)
         if os.environ.get('OUTLOUD_CONVERSATION_START_ALLOWED')!='1' or not os.environ.get('APIFY_TOKEN'):
             raise ProviderNotConfigured('New native conversation collection is paused.')
-        from native_access import require,raise_for_actor_start
+        from native_access import require,actor_start
         require()
-        authorize('apify-native-'+platform.lower()+'-search',int(cap*1000000))
-        response=httpx.post('https://api.apify.com/v2/acts/'+actor+'/runs',
+        authorize('apify-native-'+platform.lower()+('-replies' if root else '-search'),int(cap*1000000))
+        data=actor_start(httpx.post,'https://api.apify.com/v2/acts/'+actor+'/runs',
             headers={'Authorization':'Bearer '+os.environ['APIFY_TOKEN']},
             params={'maxTotalChargeUsd':cap,'maxItems':limit,'timeout':90},json=payload,timeout=20)
-        raise_for_actor_start(response);data=response.json()['data']
-        return {'run_id':data['id'],'dataset_id':data['defaultDatasetId']}
+        return {'run_id':data['id'],'dataset_id':data['defaultDatasetId'],'credential_fingerprint':fingerprint,'dataset_limit':limit}
     can_start=os.environ.get('OUTLOUD_CONVERSATION_START_ALLOWED')=='1'
     run,rows,observed=cached_collection(key,path,start,max_age=21600 if can_start else None)
     if rows is None:
@@ -292,8 +355,20 @@ def discover(query,limit=20,wait_seconds=0,platform='X'):
         with sqlite3.connect(path,timeout=15) as db:
             db.execute('UPDATE media_jobs SET rows=?,created=? WHERE key=?',(json.dumps(rows),observed,key))
     check_collection(rows,platform)
-    sources=normalize(rows,platform)
-    for source in sources:source['metrics']['checked_at']=datetime.fromtimestamp(observed,timezone.utc).isoformat()
+    context=None
+    if root:
+        parent=next((row for row in rows if str(row.get('id'))==root),None)
+        if parent:
+            text=parent.get('fullText') or parent.get('text')
+            if isinstance(text,str) and text.strip():
+                context={'url':payload['targets'][0],'text':text.strip()[:1200]}
+        rows=[row for row in rows if row.get('isReply') is True
+              and root in (str(row.get('conversationId')),str(row.get('inReplyToId')))
+              and str(row.get('id'))!=root]
+    sources=normalize(rows,platform,limit)
+    for source in sources:
+        source['metrics']['checked_at']=datetime.fromtimestamp(observed,timezone.utc).isoformat()
+        if context:source['thread_context']=context
     from research_providers import remember_public_sources
     remember_public_sources(sources)
     return sources

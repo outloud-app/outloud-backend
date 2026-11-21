@@ -116,8 +116,11 @@ def evaluation_key(project,source,model,*,policy=None):
     import hashlib
     product=project.model_dump()
     product.pop('followed_sources',None) # preference changes do not change the product's factual job
+    source_key={'id':source['id'],'title':source['title'][:250],'text':source.get('summary','')[:8000]}
+    if source.get('verified_competitor'):source_key['verified_competitor']=source['verified_competitor']
+    if source.get('thread_context'):source_key['thread_context']=source['thread_context']
     return hashlib.sha256(json.dumps({'policy':EVALUATION_VERSION if policy is None else policy,'model':model,'product':product,
-        'source':{'id':source['id'],'title':source['title'][:250],'text':source.get('summary','')[:8000]}},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        'source':source_key},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def evaluation_models():
@@ -153,12 +156,25 @@ def read_available_evaluation(db,project,source):
     return None
 
 
+def with_verified_publishers(project,sources):
+    from competitor_accounts import publishers, source_handle
+    accounts=publishers(project) if callable(getattr(project,'model_dump',None)) else {}
+    output=[]
+    for source in sources:
+        item={k:v for k,v in source.items() if k!='verified_competitor'}
+        if accounts and item.get('evidence',{}).get('type')=='original_platform_post':
+            name=accounts.get((item.get('platform'),source_handle(item)))
+            if name:item['verified_competitor']=name
+        output.append(item)
+    return output
+
+
 def cached_evaluations(project,sources):
     from research_retrieval import connect
     output=[]
     with connect() as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_decisions'").fetchone():return []
-        for source in sources:
+        for source in with_verified_publishers(project,sources):
             verdict=read_available_evaluation(db,project,source)
             if verdict:output.append({**source,'evaluation':verdict})
     return output
@@ -228,6 +244,7 @@ def evaluate(project,sources,on_progress=None):
     if len(sources)>100:raise ValueError('Evaluation exceeds the source limit.')
     if len({source['id'] for source in sources})!=len(sources):raise ValueError('Duplicate source identifiers')
     if not sources:return {}
+    sources=with_verified_publishers(project,sources)
     path=Path(os.environ.get('OUTLOUD_PROVIDER_CACHE',str(Path(__file__).parent/'.data/provider-media.sqlite3')))
     path.parent.mkdir(parents=True,exist_ok=True)
     by_id={source['id']:source for source in sources}
@@ -259,6 +276,10 @@ def evaluate(project,sources,on_progress=None):
             try:
                 verdicts=future.result()
                 results.update(verdicts)
+                recovered=getattr(verdicts,'recovered_quotes',0)
+                unrecoverable=getattr(verdicts,'unrecoverable_quotes',0)
+                if recovered or unrecoverable:
+                    failure_reasons.append({'type':'QuoteRecovery','recovered':recovered,'unrecoverable':unrecoverable})
                 missing=[source['id'] for source in batch if source['id'] not in verdicts]
                 if missing:
                     unavailable.extend(missing)
@@ -310,7 +331,7 @@ def evaluation_schema(sources):
     properties['topic_evidence'] = {'type':'array','maxItems':5,'items':{
         'type':'object','properties':{'keyword':{'type':'string'},'quote':{'type':'string'}},
         'required':['keyword','quote']}}
-    properties['need_type']={'type':'string','enum':['software_recommendation','workflow_friction','feature_request','outcome_advice','general_discussion','not_applicable']}
+    properties['need_type']={'type':'string','enum':['software_recommendation','workflow_friction','feature_request','outcome_advice','general_discussion','niche_discussion','not_applicable']}
     properties['intent']['enum'] = ['audience_problem','competitor','creative_reference','irrelevant']
     properties['match_level']['enum'] = ['Direct','Adjacent','Related','Unrelated']
     properties['relevance'] = {'type':'number','minimum':0,'maximum':1}
@@ -318,11 +339,71 @@ def evaluation_schema(sources):
             'items':{'type':'object','properties':properties,'required':list(properties)}}},'required':['items']}
 
 
-def evaluate_batch(project,sources):
+def normalized_quote(text):
+    """Return normalized text and offsets back into the original."""
+    output,offsets=[],[]
+    punctuation=str.maketrans({'‘':"'",'’':"'",'“':'"','”':'"'})
+    for index,char in enumerate(text):
+        if char in '\u200b\u200c\u200d\u2060\ufeff\ufe0e\ufe0f':continue
+        if char.isspace():
+            if not output or output[-1]==' ':continue
+            char=' '
+        output.append(char.translate(punctuation))
+        offsets.append(index)
+    if output and output[-1]==' ':
+        output.pop()
+        offsets.pop()
+    def emoji(char):
+        code=ord(char)
+        return 0x1F000<=code<=0x1FAFF or 0x2600<=code<=0x27BF
+    kept=[index for index,char in enumerate(output) if char!=' ' or
+          not ((index and emoji(output[index-1])) or (index+1<len(output) and emoji(output[index+1])))]
+    return ''.join(output[index] for index in kept),[offsets[index] for index in kept]
+
+
+def original_quote(quote, original):
+    from difflib import SequenceMatcher
+    if not isinstance(quote,str) or len(quote)<12:return None
+    if quote in original:return quote
+    if len(quote)>240:return None
+    target,_=normalized_quote(quote)
+    body,offsets=normalized_quote(original[:8251])
+    if len(target)<12:return None
+    start=body.find(target)
+    if start>=0:return original[offsets[start]:offsets[start+len(target)-1]+1]
+    # Compare a bounded set of windows anchored by independent exact blocks.
+    tolerance=max(1,int(len(target)*.16))
+    seeds=set()
+    for offset in range(0,len(target)-7, max(4,len(target)//6)):
+        token=target[offset:offset+8]
+        for match in list(re.finditer(re.escape(token),body))[:24]:
+            seeds.add(max(0,match.start()-offset))
+    best=None
+    def comparable(text):
+        return re.sub(r'(?<=[^\w\s]) (?=[^\w\s])','',text)
+    target=comparable(target)
+    for guess in sorted(seeds)[:96]:
+        for start in range(max(0,guess-2),min(len(body),guess+3)):
+            for end in range(start+max(12,len(target)-tolerance),min(len(body),start+len(target)+tolerance)+1):
+                if end<len(body) and body[end-1].isalnum() and body[end].isalnum():continue
+                if start and body[start-1].isalnum() and body[start].isalnum():continue
+                span=body[start:end].strip()
+                ratio=SequenceMatcher(None,target,comparable(span),autojunk=False).ratio()
+                if ratio>=.92 and (best is None or ratio>best[0]):
+                    best=(ratio,start,end)
+    if best is None:return None
+    _,start,end=best
+    return original[offsets[start]:offsets[end-1]+1].strip()
+
+
+def evaluate_batch(project,sources,*,retry_quotes=True):
     key=os.environ.get('GEMINI_API_KEY')
     if not key:raise ProviderNotConfigured('A Gemini API key is required; a browser chat session cannot authorize API calls.')
     # Text only with bounded input/output and no model tools.
-    items=[{'id':s['id'],'platform':s.get('platform',''),'author':s.get('author',''),'url':s.get('url',''),'title':s['title'][:250],'text':s.get('summary','')[:8000]} for s in sources]
+    items=[{'id':s['id'],'platform':s.get('platform',''),'author':s.get('author',''),'verified_competitor':s.get('verified_competitor'),'url':s.get('url',''),'title':s['title'][:250],'text':s.get('summary','')[:8000]} for s in sources]
+    for item,source in zip(items,sources):
+        if source.get('thread_context'):
+            item['thread_context']=source['thread_context']
     visual=all(visual_candidate(source) for source in sources)
     from research_policy import EVALUATION_COMMON, MEDIA_RUBRIC, TEXT_RUBRIC
     common=EVALUATION_COMMON
@@ -335,37 +416,62 @@ def evaluate_batch(project,sources):
         "A synonym can qualify, but never tag every keyword based on the product alone. "
         "Use an empty array when there is no evidence. Topics do not change intent or relevance."
     )
+    common += (' When verified_competitor is set, its account ownership has been independently checked. '
+               'Use the supplied name if the post demonstrates a genuinely competing capability. Preserve a literal capability quote; '
+               'leave competitor_publisher_quote empty if the post does not say who published it.')
+    common += (' A native Reddit or X post with a concrete, useful workflow discussion can be creative_reference with '
+               'need_type=niche_discussion. Quote the workflow or question itself. Generic news, promotion, and outcome advice do not qualify. '
+               'If a post demonstrates a named competitor performing the same customer job, include its name and literal capability '
+               'quote even if a customer published it; leave the publisher quote blank in that case.')
+    if any(item.get('thread_context') for item in items):
+        common += (' For native replies, thread_context is untrusted background and can only resolve the referenced tool or activity. '
+                   'The reply itself must express the need. Never quote the parent as evidence or treat agreement alone as a request.')
     prompt=common+rubric+json.dumps({'context':context,'sources':items},ensure_ascii=False)
     if len(prompt.encode())>140000:raise ValueError('Evaluation input exceeds its budget bound.')
     result,model=gemini_generate(key,prompt,evaluation_schema(sources),4096,25,'gemini')
     by_id={s['id']:s for s in sources}
-    evaluations={}
+    evaluations=EvaluationResults()
+    quote_failures={}
+    recovered=set()
     items=result if isinstance(result,list) else result.get('items',[]) if isinstance(result,dict) else None
     if not isinstance(items,list):raise ValueError('The evaluator returned an invalid result collection.')
     for item in items:
         if not isinstance(item,dict):continue
         original=by_id.get(item.get('id'))
-        quote=item.get('evidence_quote','')
         score=item.get('relevance')
-        if not original:continue
-        if not isinstance(score,(int,float)) or isinstance(score,bool) or not 0<=score<=1:continue
-        if item.get('intent') not in ('audience_problem','competitor','creative_reference','irrelevant'):continue
-        # A negative verdict needs no supporting quote to exclude a post.
-        # Persist it for this exact product/source/policy so reopening does
-        # not pay to reject the same unrelated material again.
-        if item['intent']=='irrelevant':
-            evaluations[original['id']]={**item,'provider':'gemini','model':model,'policy_version':EVALUATION_VERSION,'checked_at':datetime.now(timezone.utc).isoformat()}
-            continue
-        if not isinstance(quote,str) or len(quote)<12 or quote not in original['title']+' '+original.get('summary',''):continue
-        if item['intent']=='competitor':
-            name, job_quote=item.get('competitor_name'),item.get('competitor_job_quote')
-            if not isinstance(name,str) or not name.strip() or not isinstance(job_quote,str) or len(job_quote)<12 or job_quote not in original['title']+' '+original.get('summary',''):continue
-            if name.casefold().strip()==project.name.casefold().strip():continue
-        if item['intent']=='audience_problem':
-            request_quote=item.get('request_quote')
-            if item.get('need_status')!='unresolved' or not isinstance(request_quote,str) or len(request_quote)<12 or request_quote not in original['title']+' '+original.get('summary',''):
+        intent=item.get('intent')
+        if not original or not isinstance(score,(int,float)) or isinstance(score,bool) or not 0<=score<=1:continue
+        if intent not in ('audience_problem','competitor','creative_reference','irrelevant'):continue
+        if intent=='competitor':
+            name=item.get('competitor_name')
+            if not isinstance(name,str) or not name.strip() or name.casefold().strip()==project.name.casefold().strip():continue
+        if intent=='audience_problem' and item.get('need_status')!='unresolved':continue
+        fields=('evidence_quote','request_quote','competitor_job_quote','competitor_publisher_quote')
+        if intent=='irrelevant':
+            item={**item,**dict.fromkeys(fields,'')}
+        else:
+            required={'evidence_quote'}
+            if intent=='audience_problem':required.add('request_quote')
+            if intent=='competitor':required.add('competitor_job_quote')
+            original_text=original['title']+' '+original.get('summary','')
+            quotes={field:original_quote(item.get(field,''),original_text) for field in fields if field in required or item.get(field)}
+            if any(quote is None for quote in quotes.values()):
+                quote_failures[original['id']]=original
                 continue
+            if any(item.get(field)!=quote for field,quote in quotes.items()):recovered.add(original['id'])
+            item={**item,**quotes}
         evaluations[original['id']]={**item,'provider':'gemini','model':model,'policy_version':EVALUATION_VERSION,'checked_at':datetime.now(timezone.utc).isoformat()}
+    for identifier,source in quote_failures.items():
+        if identifier in evaluations or not retry_quotes:continue
+        try:
+            retry=evaluate_batch(project,[source],retry_quotes=False)
+        except (httpx.HTTPError,ValueError,RuntimeError,BudgetExceeded,ProviderNotConfigured):
+            continue
+        if identifier in retry:
+            evaluations[identifier]=retry[identifier]
+            recovered.add(identifier)
+    evaluations.recovered_quotes=len(recovered)
+    evaluations.unrecoverable_quotes=len(quote_failures.keys()-evaluations.keys())
     return evaluations
 
 
@@ -387,13 +493,12 @@ def start_media_run(platform,urls):
     maximum = .50 if platform=='TikTok' else .10
     if platform=='TikTok' and os.environ.get('OUTLOUD_TIKTOK_EVALUATION_APPROVED')!='1':
         raise ProviderNotConfigured('TikTok requires approval of its $0.50 run ceiling.')
-    from native_access import require,raise_for_actor_start
+    from native_access import require,actor_start
     require()
     authorize('apify',int(maximum*1_000_000))
     payload={'directUrls':urls,'resultsType':'posts','resultsLimit':1} if platform=='Instagram' else {'postURLs':urls,'resultsPerPage':len(urls),'shouldDownloadVideos':False,'shouldDownloadCovers':False,'downloadSubtitlesOptions':'NEVER_DOWNLOAD_SUBTITLES'}
     with httpx.Client(timeout=12) as client:
-        res=client.post('https://api.apify.com/v2/acts/'+actors[platform]+'/runs',headers={'Authorization':'Bearer '+token},params={'maxTotalChargeUsd':maximum,'maxItems':len(urls),'timeout':60,'restartOnError':'false'},json=payload)
-        raise_for_actor_start(res);data=res.json()['data']
+        data=actor_start(client.post,'https://api.apify.com/v2/acts/'+actors[platform]+'/runs',headers={'Authorization':'Bearer '+token},params={'maxTotalChargeUsd':maximum,'maxItems':len(urls),'timeout':60,'restartOnError':'false'},json=payload)
     return {'run_id':data['id'],'dataset_id':data['defaultDatasetId'],'platform':platform,'maximum_charge_usd':maximum}
 
 
@@ -419,7 +524,7 @@ def normalize_media(row,platform):
 class MediaPending(Exception):pass
 
 
-def cached_collection(key,path,start,*,max_age=None):
+def cached_collection(key,path,start,*,max_age=None,empty_max_age=900):
     """Deduplicate one paid start without holding SQLite during network I/O.
 
     A per-query process lock permits unrelated platform searches to start in
@@ -441,7 +546,7 @@ def cached_collection(key,path,start,*,max_age=None):
         # and paused collection may still read old records without paying again.
         if previous:
             rows=json.loads(previous[1]) if previous[1] is not None else None
-            age_limit=min(max_age,900) if max_age is not None and rows == [] else max_age
+            age_limit=min(max_age,empty_max_age) if max_age is not None and rows == [] else max_age
             if rows is None or age_limit is None or time.time()-previous[2] < age_limit:
                 return json.loads(previous[0]),rows,previous[2]
         run=start()
@@ -457,18 +562,21 @@ def collect_media_run(run,client=None):
     if not token:raise ProviderNotConfigured('Apify API access is required.')
     if any(not re.fullmatch(r'[A-Za-z0-9]+',str(run.get(key,''))) for key in ('run_id','dataset_id')):
         raise ValueError('Invalid provider run reference.')
+    limit=run.get('dataset_limit',20)
+    if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=60:
+        raise ValueError('Invalid provider dataset limit.')
     def read(http):
         response=http.get('https://api.apify.com/v2/actor-runs/'+run['run_id'],headers={'Authorization':'Bearer '+token},params={'waitForFinish':12})
         response.raise_for_status();data=response.json()['data']
         if data['status'] in ('READY','RUNNING','TIMING-OUT','ABORTING'):raise MediaPending('Media measurements are still being collected.')
         partial=data['status']=='TIMED-OUT'
         if data['status']!='SUCCEEDED' and not partial:raise RuntimeError('The media provider could not complete this request.')
-        response=http.get('https://api.apify.com/v2/datasets/'+run['dataset_id']+'/items',headers={'Authorization':'Bearer '+token},params={'format':'json','clean':'true','limit':20})
+        response=http.get('https://api.apify.com/v2/datasets/'+run['dataset_id']+'/items',headers={'Authorization':'Bearer '+token},params={'format':'json','clean':'true','limit':limit})
         response.raise_for_status()
         if len(response.content)>2_000_000:raise ValueError('Provider results exceed the response limit.')
         rows=response.json()
         if not isinstance(rows,list):raise ValueError('Invalid provider dataset.')
-        return [{**row,'_outloud_collection_status':'partial' if partial else 'complete'} for row in rows[:20] if isinstance(row,dict)]
+        return [{**row,'_outloud_collection_status':'partial' if partial else 'complete'} for row in rows[:limit] if isinstance(row,dict)]
     if client is not None:return read(client)
     with httpx.Client(timeout=18,follow_redirects=False) as http:return read(http)
 
@@ -598,13 +706,12 @@ def start_tiktok_discovery(phrases,limit=15):
     if not token or os.environ.get('OUTLOUD_MEDIA_START_ALLOWED')!='1' or os.environ.get('OUTLOUD_TIKTOK_EVALUATION_APPROVED')!='1':
         raise ProviderNotConfigured('TikTok API access and its run ceiling must be approved.')
     payload=tiktok_discovery_input(phrases,limit)
-    from native_access import require,raise_for_actor_start
+    from native_access import require,actor_start
     require()
     authorize('apify-search',500000)
     with httpx.Client(timeout=12) as client:
-        response=client.post('https://api.apify.com/v2/acts/clockworks~tiktok-scraper/runs',
+        data=actor_start(client.post,'https://api.apify.com/v2/acts/clockworks~tiktok-scraper/runs',
           headers={'Authorization':'Bearer '+token},params={'maxTotalChargeUsd':.50,'maxItems':limit,'timeout':120,'restartOnError':'false'},json=payload)
-        raise_for_actor_start(response);data=response.json()['data']
     return {'run_id':data['id'],'dataset_id':data['defaultDatasetId'],'platform':'TikTok','maximum_charge_usd':.50,'mode':'search'}
 
 
@@ -666,14 +773,13 @@ def start_instagram_discovery(hashtags,limit=15,keyword=False):
     token=os.environ.get('APIFY_TOKEN')
     if not token:raise ProviderNotConfigured('Instagram API access is required.')
     payload=instagram_keyword_input(hashtags,limit) if keyword else instagram_discovery_input(hashtags,limit)
-    from native_access import require,raise_for_actor_start
+    from native_access import require,actor_start
     require()
     authorize('apify-instagram-search',100000)
     with httpx.Client(timeout=12) as client:
         actor='apify~instagram-hashtag-scraper' if keyword else 'apify~instagram-scraper'
-        response=client.post('https://api.apify.com/v2/acts/'+actor+'/runs',
+        data=actor_start(client.post,'https://api.apify.com/v2/acts/'+actor+'/runs',
           headers={'Authorization':'Bearer '+token},params={'maxTotalChargeUsd':.10,'maxItems':limit,'timeout':120,'restartOnError':'false'},json=payload)
-        raise_for_actor_start(response);data=response.json()['data']
     return {'run_id':data['id'],'dataset_id':data['defaultDatasetId'],'platform':'Instagram','maximum_charge_usd':.10,'mode':'search'}
 
 
@@ -759,12 +865,12 @@ def remember_public_sources(sources):
             identity=post_identity(source.get('url',''))
             if not identity or identity[0]!=source.get('platform'):continue
             # Explicit allowlist excludes personal context, cached classifications and scores.
-            record={key:source[key] for key in ('id','platform','kind','title','summary','author','community','published_at','metrics','media','evidence','preview') if key in source}
+            record={key:source[key] for key in ('id','platform','kind','title','summary','author','community','published_at','metrics','media','evidence','preview','thread_context') if key in source}
             record.update(url=identity[1],section='discover',competitor=False)
             previous=db.execute('SELECT data FROM public_sources WHERE url=?',(identity[1],)).fetchone()
             if previous:
                 old=json.loads(previous[0])
-                for field in ('metrics','media','preview'):
+                for field in ('metrics','media','preview','thread_context'):
                     if old.get(field) and not record.get(field):record[field]=old[field]
                 old_original=(old.get('evidence') or {}).get('type')=='original_platform_post'
                 new_original=(record.get('evidence') or {}).get('type')=='original_platform_post'

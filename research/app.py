@@ -419,6 +419,25 @@ def get_project(project_id: str, request: Request):
     return project_response(project_id,request)
 
 
+def preserve_research_diagnostics(report, results):
+    previous=results.get('quality_report',{})
+    rejected=previous.get('rejected',[])+report.get('rejected',[])
+    report['rejected']=list({(row['id'],row['reason']):row for row in rejected}.values())
+    for diagnostic in ('evaluation_failures','refresh'):
+        if diagnostic in previous:report[diagnostic]=previous[diagnostic]
+    if 'retrieval' in previous:
+        retrieval=previous['retrieval']
+        collections=retrieval.get('native_collections') if isinstance(retrieval,dict) else None
+        if collections is not None:
+            # Older cached diagnostics may omit a lane. Keep the counts and
+            # give existing desktop clients the string their decoder expects.
+            retrieval={**retrieval,'native_collections':[
+                {**entry,'lane':entry.get('lane') or 'unknown'} for entry in collections
+            ]}
+        report['retrieval']=retrieval
+    if 'refresh' in results:report['refresh']=results['refresh']
+
+
 def project_response(project_id: str, request: Request, desktop: bool = False, on_progress=None, cached_only=False):
     row = owned(request, project_id)
     data, results = json.loads(row["data"]), json.loads(row["results"])
@@ -446,7 +465,10 @@ def project_response(project_id: str, request: Request, desktop: bool = False, o
                         consume(db,"public-search:"+day,SEARCH_DAILY_LIMIT)
             # Keep prior strong matches for this exact owner and product brief, across search versions.
             prior=results.get('discover',[])+results.get('conversations',[])
+            from workspace_refresh import archived
             with connect() as db:
+                history=archived(db,project_id,row['owner'],project)
+                prior.extend(history)
                 # The current version's expired cache is still valid candidate
                 # evidence. Expiry requires fresh evaluation, not forgetting the
                 # original posts and media we already retrieved for this brief.
@@ -462,7 +484,7 @@ def project_response(project_id: str, request: Request, desktop: bool = False, o
                 if results.get('quality_report'):
                     from workspace_refresh import refresh
                     from research_routing import mode
-                    results=refresh(project,results,previous_snapshot=json.loads(row['results']),native_only=desktop and mode()=='native')
+                    results=refresh(project,results,previous_snapshot=json.loads(row['results']),native_only=desktop and mode()=='native',history=history)
             else:
                 def charge_search():
                     with connect() as quota_db:
@@ -492,8 +514,7 @@ def project_response(project_id: str, request: Request, desktop: bool = False, o
                 report['blockers']=list(dict.fromkeys(report['blockers']+issues))
             results['discover']=[s for s in selected if s['section']=='discover']
             results['conversations']=[s for s in selected if s['section']=='conversations']
-            for diagnostic in ('retrieval','evaluation_failures'):
-                if diagnostic in results.get('quality_report',{}):report[diagnostic]=results['quality_report'][diagnostic]
+            preserve_research_diagnostics(report, results)
             results['quality_report']=report
             results['coverage']={p:sum(s['platform']==p for s in selected) for p in ('Instagram','TikTok','Reddit','X')}
             for item in results["discover"]+results["conversations"]:

@@ -3,9 +3,9 @@ A source count cannot establish usefulness, availability, or customer retention.
 """
 from datetime import datetime,timezone
 from live_discovery import post_identity
-from research_quality import select_results,QUALITY_VERSION,MAX_RESULTS,LANE_LIMITS
+from research_quality import select_results,QUALITY_VERSION,MAX_RESULTS,LANE_LIMITS,RELEASE_MINIMUM,MIN_CONVERSATIONS_PER_PLATFORM
 
-TARGETS=dict(LANE_LIMITS)
+TARGETS=dict(RELEASE_MINIMUM)
 
 
 def timestamp(value):
@@ -33,10 +33,15 @@ def assess(project,workspace,now=None):
         lanes[lane]={'target':target,'checked_matches':len(sources),'shortfall':max(0,target-len(sources)),
                      'platforms':sorted({s['platform'] for s in sources}),
                      'metrics_observed_within_seven_days':recent_metrics}
+    platform_counts=quality['conversation_platform_counts']
+    conversation_targets={platform:{'target':MIN_CONVERSATIONS_PER_PLATFORM,'checked_matches':count,
+                                     'shortfall':max(0,MIN_CONVERSATIONS_PER_PLATFORM-count)}
+                          for platform,count in platform_counts.items()}
     return {'name':project.name,'quality_policy':QUALITY_VERSION,'lanes':lanes,
-            'target_volume_met':all(v['shortfall']==0 for v in lanes.values()),
+            'target_volume_met':all(v['shortfall']==0 for v in (*lanes.values(),*conversation_targets.values())),
+            'conversation_targets':conversation_targets,
             'selection_capacity':MAX_RESULTS,'target_total':sum(TARGETS.values()),
-            'capacity_supports_target':MAX_RESULTS>=sum(TARGETS.values()),
+            'capacity_supports_target':all(LANE_LIMITS[lane]>=target for lane,target in TARGETS.items()),
             'source_availability':'Not verified by this offline report; working links need a separate live check.',
             'usefulness':'Semantic gates only; human acceptance still required.',
             'recurring_value':'Not established; requires observed customer use and time saved.',

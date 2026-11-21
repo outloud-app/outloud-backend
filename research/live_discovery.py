@@ -285,7 +285,7 @@ def merge_candidates(candidates):
         previous=unique.get(source['url'])
         def evidence_rank(item):
             evidence=item.get('evidence') or {}
-            return (evidence.get('type')=='original_platform_post',bool(evidence.get('engagement_verified')),bool(item.get('media')))
+            return (evidence.get('type')=='original_platform_post',bool(evidence.get('engagement_verified')),bool(item.get('media')),bool(item.get('thread_context')))
         if previous is None or evidence_rank(source)>evidence_rank(previous):unique[source['url']]=source
     return list(unique.values())
 
@@ -350,6 +350,7 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
     plan,objective=search_plan(project)
     planning_mode='problem_phrases'
     from research_providers import configuration,search_brief
+    from provider_budget import BudgetExceeded
     provider=configuration()
     sources=[];failures=[];native_issues=[];reusable=[];collection_counts=[]
     from research_providers import remember_public_sources,remembered_candidates
@@ -382,7 +383,6 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
         except NativeAccessUnavailable as error:raise ResearchUnavailable(str(error)) from None
     brief={}
     if provider['enabled'] and provider['evaluation']:
-        from provider_budget import BudgetExceeded
         try:
             brief=search_brief(project)
             if acquisition=='indexed':
@@ -409,6 +409,35 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
         return parse_results(search(query,objective+(f' Audience discussions must be published on or after {cutoff}. Return publication dates; exclude older or undated discussions.' if platform in ('Reddit','X') else ' Include established popular niche creatives from the last 12 months as well as recent posts.')),project)
     # The connected Apify free account permits five active runs. Leave one
     # slot free instead of launching six actors and losing a whole platform.
+    conversation_candidates=[]
+    early_checked=[]
+    early_failures=[]
+    early_attempted=set()
+
+    def publish_checked(rows):
+        chosen,_=select_results(project,reusable+early_checked+rows,require_evaluation=True,native_only=acquisition=='native')
+        if chosen:
+            on_progress({'stage':'evaluating','discover':[s for s in chosen if s['section']=='discover'],
+                         'conversations':[s for s in chosen if s['section']=='conversations']})
+
+    def evaluate_early(rows):
+        # Start with a small verified batch while slower native collectors and
+        # account discovery are pending. The main pass reuses these verdicts.
+        if not on_progress or acquisition!='native' or not (provider['enabled'] and provider['evaluation']) or len(early_attempted)>=16:
+            return
+        from research_providers import evaluate
+        pending=[row for row in rows if row['id'] not in early_attempted and is_native_source(row)]
+        batch=balanced_candidates(project,pending,limit=min(8,16-len(early_attempted))) if pending else []
+        if not batch:return
+        early_attempted.update(row['id'] for row in batch)
+        try:
+            verdicts=evaluate(project,batch)
+        except (BudgetExceeded,RuntimeError,ValueError):
+            return
+        early_failures.extend(getattr(verdicts,'failure_reasons',[]))
+        early_checked.extend({**row,'evaluation':verdicts[row['id']]} for row in batch if row['id'] in verdicts)
+        publish_checked([])
+
     with ThreadPoolExecutor(max_workers=4) as pool:
         def native_media(task):
             rows=discover_native_media(task['phrases'],20,90,task['platform'],task['platform']=='Instagram')
@@ -416,45 +445,73 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
             return [{**row,'retrieved_for':task['lane']} for row in rows]
         # Native video search has a distinct authorization gate. Without it,
         # keep using already-collected public sources; never start paid runs.
-        import os
+        media_tasks=[]
         if can_plan_native and os.environ.get('OUTLOUD_MEDIA_SEARCH_ALLOWED')=='1':
             from research_providers import discover_native_media,native_search_terms
             try:
-                native_terms=native_search_terms(project)
-                native={pool.submit(native_media,task):(task['platform'],task['lane'])
-                        for task in media_plan({**native_terms,'brief':brief},project)}
+                try:
+                    native_terms=native_search_terms(project)
+                except BudgetExceeded:
+                    raise
+                except Exception:
+                    from native_collection import fallback_media_terms
+                    native_terms=fallback_media_terms(project,brief)
+                media_tasks=media_plan({**native_terms,'brief':brief},project)
+                native={pool.submit(native_media,task):(task['platform'],task['lane'],None)
+                        for task in media_tasks[:2]}
             except Exception:
                 native={};native_issues.append('Native search planning is temporarily unavailable.')
         else:
             native={}
             if acquisition=='native':native_issues.append('Native Instagram/TikTok acquisition is disabled; web search was not substituted.')
+        discussions=[]
         if can_plan_native and os.environ.get('OUTLOUD_CONVERSATION_START_ALLOWED')=='1':
-            from native_conversations import discover as native_discussions,queries_for,ConversationUnavailable
+            from native_conversations import discover as native_discussions,queries_for,ConversationUnavailable,initial_query_limit,candidate_limit
             for platform in ('X','Reddit'):
                 try:
                     # Separate searches avoid one broad latest-results list
                     # exhausting the candidate pool. Each is budget-gated.
-                    for query in queries_for(project,platform)[:max(1,min(3,int(os.environ.get('OUTLOUD_NATIVE_CONVERSATION_QUERY_LIMIT','1'))))]:
-                        native[pool.submit(native_discussions,query,20,90,platform)]=(platform,'conversations')
+                    discussions.append((platform,queries_for(project,platform)[:initial_query_limit()]))
                 except ConversationUnavailable as exc:native_issues.append(str(exc))
                 except Exception:native_issues.append(platform+' conversation planning is temporarily unavailable.')
         elif acquisition=='native':native_issues.append('Native Reddit/X acquisition is disabled; web search was not substituted.')
+        def queue_discussion(platform,query):
+            native[pool.submit(native_discussions,query,candidate_limit(platform),90,platform)]=(platform,'conversations',query)
+        for platform,queries in discussions:
+            if queries:queue_discussion(platform,queries[0])
+        for task in media_tasks[2:]:
+            native[pool.submit(native_media,task)]=(task['platform'],task['lane'],None)
+        for platform,queries in discussions:
+            for query in queries[1:]:queue_discussion(platform,query)
         futures={pool.submit(retrieve,platform,query):platform for platform,query in plan} if acquisition=='indexed' else {}
         for future in as_completed(futures):
             platform=futures[future]
             try:sources.extend(item for item in future.result() if item['platform']==platform)
             except Exception:failures.append(platform)
         for future in as_completed(native):
-            platform,lane=native[future]
+            platform,lane,query=native[future]
+            detail={'query':query} if query is not None else {}
             try:
                 rows=future.result()
                 sources.extend(rows)
-                collection_counts.append({'platform':platform,'lane':lane,'returned':len(rows),'status':'completed'})
+                if query is not None:
+                    conversation_candidates.extend(rows)
+                    detail['source_ids']=[source['id'] for source in rows]
+                collection_counts.append({'platform':platform,'lane':lane,'returned':len(rows),'status':'completed',**detail})
             except Exception as exc:
                 collection_counts.append({'platform':platform,'lane':lane,'returned':0,'status':'unavailable',
-                                          'http_status':getattr(getattr(exc,'response',None),'status_code',None)})
+                                          'http_status':getattr(getattr(exc,'response',None),'status_code',None),**detail})
                 from native_conversations import ConversationUnavailable
                 native_issues.append(str(exc) if isinstance(exc,ConversationUnavailable) else 'Native source collection has not completed; only checked sources are shown.')
+            else:
+                evaluate_early(rows)
+    official_sources=[]
+    competitor_report={}
+    if acquisition=='native' and callable(getattr(project,'model_dump',None)):
+        from competitor_accounts import collect_for_project
+        official_sources,competitor_report=collect_for_project(project)
+        official_sources=merge_candidates(official_sources)
+        sources.extend(official_sources)
     evaluation_error=None
     from research_providers import configuration,evaluate,enrich_media,remembered_candidates,remember_public_sources
     config=configuration()
@@ -470,7 +527,20 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
     sources=merge_candidates(combined)
     remember_public_sources(sources)
     from research_retrieval import shortlist
+    official_ids={source['id'] for source in official_sources}
     sources,retrieval_report=shortlist(project,sources) if config['enabled'] and config['evaluation'] else (balanced_candidates(project,sources),{'mode':'lexical'})
+    official_checked=[]
+    evaluation_failures=list(early_failures)
+    if config['enabled'] and config['evaluation']:
+        # Publisher feeds must not compete for the generic shortlist's space.
+        checked_ids={source['id'] for source in sources}
+        remaining=[source for source in official_sources if source['id'] not in checked_ids]
+        for index in range(0,len(remaining),40):
+            batch=remaining[index:index+40]
+            try:decisions=evaluate(project,batch)
+            except (RuntimeError,BudgetExceeded,ValueError):break
+            evaluation_failures.extend(getattr(decisions,'failure_reasons',[]))
+            official_checked.extend({**source,'evaluation':decisions[source['id']]} for source in batch if source['id'] in decisions)
     media_issues=[]
     if not (config['enabled'] and config['evaluation']):
         sources,media_issues=enrich_media(sources)
@@ -478,26 +548,31 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
         try:
             def emit_partial(verdicts):
                 partial=[{**s,'evaluation':verdicts[s['id']]} for s in sources if s['id'] in verdicts]
-                selected,_=select_results(project,reusable+partial,require_evaluation=True)
-                on_progress({'stage':'evaluating','discover':[s for s in selected if s['section']=='discover'],'conversations':[s for s in selected if s['section']=='conversations']})
+                publish_checked(partial)
             evaluations=evaluate(project,sources,on_progress=emit_partial) if on_progress else evaluate(project,sources)
+            evaluation_failures.extend(getattr(evaluations,'failure_reasons',[]))
             if getattr(evaluations,'unavailable_ids',[]):
                 evaluation_error='Some sources could not be evaluated; only independently checked results are shown.'
             for source in sources:
                 source.pop('evaluation',None)
                 if source['id'] in evaluations:source['evaluation']=evaluations[source['id']]
         except Exception:
-            raise ResearchUnavailable('We couldn’t finish evaluating these sources. Your project is saved; retry without re-entering it.') from None
+            if not (reusable or early_checked or official_checked):
+                raise ResearchUnavailable('We couldn’t finish evaluating these sources. Your project is saved; retry without re-entering it.') from None
+            evaluation_error='Some sources could not be evaluated; only independently checked results are shown.'
     if config['enabled'] and config['evaluation']:
         from research_providers import media_candidates
         media_pool=media_candidates(sources)
         before={s['id']:(s.get('title'),s.get('summary')) for s in media_pool}
         enriched,media_issues=enrich_media(media_pool)
         changed=[s for s in enriched if before[s['id']]!=(s.get('title'),s.get('summary'))]
+        changed_ids={source['id'] for source in changed}
+        early_checked=[source for source in early_checked if source['id'] not in changed_ids]
         # Platform captions supersede index excerpts: re-evaluate changed text.
         # Never reuse a verdict whose quote refers to the old search snippet.
         try:
             refreshed=evaluate(project,changed) if changed else {}
+            evaluation_failures.extend(getattr(refreshed,'failure_reasons',[]))
             if getattr(refreshed,'unavailable_ids',[]):
                 evaluation_error='Some updated captions could not be evaluated; those posts were excluded.'
         except Exception:
@@ -509,20 +584,42 @@ def research_live(project,search=call_search,prior_candidates=(),on_progress=Non
         by_id={s['id']:s for s in enriched}
         sources=[by_id.get(s['id'],s) for s in sources]
         remember_public_sources(sources)
+    conversation_checked=[]
+    if acquisition=='native' and config['enabled'] and config['evaluation']:
+        shortlisted={source['id'] for source in sources}
+        previously_checked={source['id'] for source in cached_evaluations(project,conversation_candidates)}
+        for platform in ('X','Reddit'):
+            remaining=[source for source in merge_candidates(conversation_candidates)
+                       if source['platform']==platform and source['id'] not in shortlisted|previously_checked]
+            for index in range(0,len(remaining),40):
+                try:decisions=evaluate(project,remaining[index:index+40])
+                except (BudgetExceeded,RuntimeError,ValueError):break
+                evaluation_failures.extend(getattr(decisions,'failure_reasons',[]))
+                conversation_checked.extend({**source,'evaluation':decisions[source['id']]}
+                    for source in remaining[index:index+40] if source['id'] in decisions)
+        # A checked candidate can have been collected but fallen outside the shared shortlist.
+        conversation_checked.extend(cached_evaluations(project,conversation_candidates))
     # A failed or crowded fresh shortlist must not erase current-policy,
     # independently checked matches from the shared corpus. These decisions
     # were validated against this exact product and unchanged source text above.
-    selected,quality=select_results(project,reusable+sources,require_evaluation=config['enabled'] and config['evaluation'],native_only=acquisition=='native')
+    selected,quality=select_results(project,reusable+early_checked+sources+official_checked+conversation_checked,require_evaluation=config['enabled'] and config['evaluation'],native_only=acquisition=='native')
     if acquisition=='native':
         from conversation_fill import fill
-        selected,quality,filled,fill_issues=fill(project,selected,quality,on_progress,brief=brief)
+        selected,quality,filled,fill_issues=fill(project,selected,quality,on_progress,brief=brief,observed=conversation_candidates,evaluation_failures=evaluation_failures)
         collection_counts.extend(filled)
         native_issues.extend(fill_issues)
         from competitor_fill import fill as fill_competitors
-        selected,quality,publisher_collections=fill_competitors(project,selected,quality)
+        selected,quality,publisher_collections=fill_competitors(project,selected,quality,checked_sources=sources+official_checked+conversation_checked,evaluation_failures=evaluation_failures)
         collection_counts.extend(publisher_collections)
-    quality['retrieval']={**retrieval_report,'acquisition':acquisition,'indexed_queries':len(plan) if acquisition=='indexed' else 0,'native_collections':collection_counts}
-    quality['evaluation_failures']=getattr(evaluations,'failure_reasons',[]) if config['enabled'] and config['evaluation'] else []
+    from native_conversations import query_yield
+    checked_queries=cached_evaluations(project,conversation_candidates) if config['enabled'] and config['evaluation'] else []
+    quality['retrieval']={**retrieval_report,'acquisition':acquisition,'indexed_queries':len(plan) if acquisition=='indexed' else 0,
+                          'native_collections':[{k:v for k,v in item.items() if k!='source_ids'} for item in collection_counts],
+                          'conversation_query_yield':query_yield(collection_counts,checked_queries,selected)}
+    if competitor_report:
+        competitor_report['posts_accepted']=sum(source['intent']=='competitors' and source['id'] in official_ids for source in selected)
+        quality['retrieval']['competitor_accounts']=competitor_report
+    quality['evaluation_failures']=evaluation_failures
     media_issues=list(dict.fromkeys(media_issues+native_issues))
     quality['blockers'].extend(media_issues)
     if media_issues:quality['launch_ready']=False

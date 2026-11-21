@@ -33,6 +33,7 @@ def test_native_request_never_launches_indexed_search(monkeypatch):
     monkeypatch.setenv('OUTLOUD_RETRIEVAL_MODE','native')
     monkeypatch.setenv('OUTLOUD_MEDIA_SEARCH_ALLOWED','1')
     monkeypatch.setenv('OUTLOUD_CONVERSATION_START_ALLOWED','1')
+    monkeypatch.setenv('OUTLOUD_NATIVE_CONVERSATION_QUERY_LIMIT','1')
     def forbidden(*a):pytest.fail('Native research must not launch web-index queries')
     monkeypatch.setattr(live,'call_search',forbidden)
     monkeypatch.setattr(providers,'configuration',lambda:{'enabled':True,'evaluation':True,'media':True})

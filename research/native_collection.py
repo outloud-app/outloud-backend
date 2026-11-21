@@ -10,6 +10,28 @@ def phrase(value, *, instagram=False):
     return value if len(value)>=4 else ''
 
 
+def activity_phrases(project, model=None):
+    """Short search seeds from the user's topics and checked product plan."""
+    model=model or {}
+    values=[*getattr(project,'keywords',[]),*model.get('adjacent_topics',[])]
+    for field in ('product_job','description','problem'):
+        words=re.findall(r"[\w'-]+",str(getattr(project,field,'')))
+        values.extend(' '.join(words[index:index+3]) for index in range(0,min(len(words)-2,12),3))
+    topics=[]
+    for value in values:
+        cleaned=phrase(value)
+        if not cleaned or not 2<=len(cleaned.split())<=4:continue
+        if cleaned.casefold() in {topic.casefold() for topic in topics}:continue
+        topics.append(cleaned)
+    return topics[:6]
+
+
+def fallback_media_terms(project, model):
+    seeds=activity_phrases(project,model)
+    if not seeds:raise ValueError('No searchable product activity.')
+    return {'tiktok':[seeds[0]+' tips',(seeds[1] if len(seeds)>1 else seeds[0])+' app demo']}
+
+
 def queries(project,model,lane,platform):
     if platform not in ('TikTok','Instagram','Reddit','X'):raise ValueError('Unsupported native platform.')
     if lane=='conversations':

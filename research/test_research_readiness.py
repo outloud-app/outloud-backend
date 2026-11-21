@@ -8,8 +8,9 @@ def test_empty_or_catalog_workspace_cannot_pass_paid_targets():
     r=assess(p,{'discover':[{'title':'catalog example','url':'https://example.com'}],'conversations':[]})
     assert not r['target_volume_met'] and r['capacity_supports_target']
     assert r['target_total']==60
-    assert [r['lanes'][lane]['target'] for lane in ('discover','competitors','conversations')]==[25,15,20]
+    assert [r['lanes'][lane]['target'] for lane in ('discover','competitors','conversations')]==[15,15,30]
     assert all(v['checked_matches']==0 for v in r['lanes'].values())
+    assert r['conversation_targets']['X']['shortfall']==15
     assert 'Not verified' in r['source_availability']
 
 

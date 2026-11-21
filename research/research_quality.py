@@ -8,12 +8,14 @@ from product_profile import clean, terms
 QUALITY_VERSION=22
 # Independent initial workspace targets. One busy lane cannot consume another's
 # capacity; these bound publication, not the reusable source corpus.
-LANE_LIMITS={'discover':25,'competitors':15,'conversations':20}
+LANE_LIMITS={'discover':40,'competitors':30,'conversations':60}
 MAX_RESULTS=sum(LANE_LIMITS.values())
 CONVERSATION_DAYS=30
 RECENT_CONVERSATION_DAYS=7
-RELEASE_MINIMUM={'discover':15,'competitors':15,'conversations':15}
+RELEASE_MINIMUM={'discover':15,'competitors':15,'conversations':30}
 MIN_DISCOVERY_VIDEO_VIEWS=1_000
+MIN_CONVERSATIONS_PER_PLATFORM=15
+COMPETITOR_INCLUDE_THIRD_PARTY=False
 
 
 def is_recent_conversation(source, now=None):
@@ -30,7 +32,7 @@ def is_recent_conversation(source, now=None):
 def route_source(source):
     text=(source.get('title','')+' '+source.get('summary','')).strip()
     builder=re.search(r"\b(?:i|we)\s+(?:(?:have|recently|just|finally)\s+)*(?:built|made|created|launched|developed)\b|\b(?:i['’]ve|we['’]ve)\s+(?:built|made|created|launched)\b|\bbuilt\s+(?:a|an|my|our)\b",text,re.I)
-    product_pitch=re.search(r"\b(?:our|my)\s+(?:app|platform|software|scanner|service|tool)\b|\bno.code platform\b|\b(?:try|download|sign up for|introducing)\s+(?:our|my|the)\b",text,re.I)
+    product_pitch=re.search(r"\bour\s+(?:app|platform|software|scanner|service|tool)\b|\bno.code platform\b|\b(?:try|download|sign up for|introducing)\s+(?:our|my|the)\b",text,re.I)
     software_build=builder and re.search(r'\b(?:app|platform|software|scanner|service|tool|bot|extension|website|agent|system)\b',text[builder.start():builder.end()+100],re.I)
     if software_build or product_pitch:return 'competitors'
     if source['platform'] not in ('Reddit','X'):return 'discover'
@@ -43,7 +45,8 @@ def route_source(source):
     # A success story followed by a broad question is not an unresolved buying need.
     resolved=re.search(r"\b(?:finally set up|problem (?:is )?solved|(?:honestly )?saved my (?:sleep|time|sanity)|works perfectly|no longer (?:need|have) to|replaced my .{0,35} with|no sleepless nights|getting back to actually living|(?:found|finding) (?:a solution|peace|something that works))\b",text,re.I)
     unresolved=re.search(r"\b(?:still (?:missing|struggling|looking|need|can't|cannot)|looking for alternatives|(?:anything|something) better|doesn't work|does not work|not working|any better (?:tools|options|alternatives))\b",text,re.I)
-    if resolved and not unresolved:return 'reject'
+    seeking_tool=re.search(r"\b(?:who has|has anyone) found something that (?:works|can|supports)\b[^?.!]{0,135}\?",text,re.I)
+    if resolved and not (unresolved or seeking_tool):return 'reject'
     if unresolved:return 'conversations'
     request=re.search(r"\b(?:looking for|any (?:service|tool|app)|is there|does anyone|has anyone|how do (?:you|i)|what (?:do you|helps|tools)|what['’]s (?:your|the best)|how (?:can|should|would) (?:i|we)|should (?:i|we)|recommend|need (?:a|an|to)|anyone else)\b",text,re.I)
     # Natural frustration is not restricted to the original chart-watching
@@ -55,7 +58,13 @@ def route_source(source):
     # Social posts often omit "I". An explicit ongoing burden still counts;
     # this is not a licence to classify every mention of an activity as pain.
     implicit_burden=re.search(r"(?:^|[.!?]\s+)(?:been|spending|wasting)\b.{0,100}\b(?:too long|too much|forever|exhausting|overwhelming)\b",text,re.I)
-    return 'conversations' if request or pain or implicit_burden or natural_request or natural_burden else 'reject'
+    feature_request=re.search(r"\b(?:please (?:add|allow|restore|bring back|reconsider)|would (?:love|like) (?:an?|the) (?:option|way|ability))\b",text,re.I)
+    product_failure=re.search(r"\b(?:stopped working|stopped updating|not (?:showing|updating|loading|triggering)|keeps (?:crashing|failing|freezing)|(?:can't|cannot) (?:find|add|change|update|see|open|save))\b",text,re.I)
+    capability_question=re.search(
+        r"\b(?:does|do|can)\s+[^?.!]{1,60}\s+(?:work|support|send|track|log|cover|scan|import|export)\b[^?.!]{0,100}\?",
+        text,re.I)
+    return 'conversations' if any((request,pain,implicit_burden,natural_request,natural_burden,
+                                    feature_request,product_failure,capability_question,seeking_tool)) else 'reject'
 
 
 def measured_metric(metrics, key):
@@ -69,6 +78,21 @@ def retrieved_video_views(source):
         return None
     views=measured_metric(metrics,'views')
     return measured_metric(metrics,'plays') if views is None else views
+
+
+def has_competitor_engagement(source):
+    metrics=source.get('metrics') or {}
+    if not metrics.get('provider') or not metrics.get('checked_at'):return False
+    views=retrieved_video_views(source)
+    likes=measured_metric(metrics,'likes') or 0
+    comments=measured_metric(metrics,'comments') or 0
+    if source.get('platform')=='Reddit':
+        return (measured_metric(metrics,'score') or 0)>=10 or comments>=5
+    if str(source.get('kind','')).casefold()=='video':
+        return views is not None and views>=3000 and (likes>=15 or comments>=5)
+    if source.get('platform')=='X':
+        return (likes>=20 or comments>=8) if views is None else views>=500 and (likes>=10 or comments>=4)
+    return likes>=15 or comments>=5
 
 
 def attention(source):
@@ -125,7 +149,17 @@ def is_native_source(source):
     return (source.get('evidence') or {}).get('type') == 'original_platform_post'
 
 
+def publication_is_verified(value):
+    try:
+        date=datetime.fromisoformat(value.replace('Z','+00:00'))
+        return timedelta(0)<=datetime.now(timezone.utc)-date<=timedelta(days=365)
+    except (AttributeError,TypeError,ValueError):
+        return False
+
+
 def select_results(project,candidates,require_evaluation=False,native_only=False):
+    from competitor_accounts import brand, publishers, source_handle
+    accounts=publishers(project) if callable(getattr(project,'model_dump',None)) else {}
     accepted={};rejections=[]
     for original in candidates:
         source=dict(original)
@@ -171,11 +205,21 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
         # Conversations also contains relevant research questions, not only
         # prospective buyers. Preserve the distinction in the published signal.
         niche_question=evaluation.get('request_quote') if editorial and evaluation.get('need_type')=='niche_question' else None
-        if verified and lane=='discover' and source['platform'] in ('Reddit','X') and evaluation.get('relevance',0)>=.75 and route_source(source)=='conversations':
-            original_text=source.get('title','')+' '+source.get('summary','')
-            for sentence in re.split(r'(?<=[.!?])\s+',original_text):
-                if 12<=len(sentence.strip())<=400 and '?' in sentence and re.search(r"\b(?:how (?:do|can|should) (?:i|we|you)|does anyone|can anyone|what (?:do you|tools|helps)|which .{0,50}(?:use|recommend))\b",sentence,re.I):
-                    niche_question=sentence.strip();lane='conversations';break
+        niche_discussion=None
+        if verified and lane=='discover' and source['platform'] in ('Reddit','X') and evaluation.get('relevance',0)>=.75:
+            # Niche discussions can provide customer research without being leads.
+            # Require an explicit quoted question or a checked workflow observation.
+            quote=evaluation['evidence_quote']
+            if '?' in quote and re.search(r"\b(?:how (?:do|can|should) (?:i|we|you)|does anyone|can anyone|what (?:do you|tools|helps)|which .{0,50}(?:use|recommend))\b",quote,re.I):
+                niche_question=quote
+                lane='conversations'
+            elif len(quote)>=24 and (evaluation.get('need_type')=='niche_discussion' or (
+                not re.search(r"\b(?:sign up|subscribe|giveaway|discount)\b",quote,re.I)
+                and re.search(r"\b(?:i|we)\s+(?:spend hours|keep checking|still struggle)|\btakes (?:forever|too long)\b",quote,re.I)
+                and re.search(r"\b(?:checking|logging|tracking|recording|scanning|in front of)\b",quote,re.I)
+            )):
+                niche_discussion=quote
+                lane='conversations'
         publisher_basis=None
         if lane=='competitors' and verified and ('policy_version' in evaluation or editorial):
             original=source.get('title','')+' '+source.get('summary','')
@@ -200,43 +244,53 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
             brand_voice=quoted_publisher and (
                 re.search(r"\b(?:our|my|we|us)\b",quote,re.I) or identity(name) in identity(quote)
             )
-            if named_job and (maker or (account_match and brand_voice)):
+            publisher=accounts.get((source['platform'],source_handle(source))) if accounts else None
+            if (named_job and publisher and brand(publisher)==brand(name) and is_native_source(source)
+                    and attention(source)['status'] in ('qualified','measured','below_threshold')
+                    and source.get('published_at') and publication_is_verified(source['published_at'])):
+                publisher_basis='official_account'
+            elif named_job and (maker or (account_match and brand_voice)):
                 publisher_basis='maker_quote' if maker else 'matching_account_and_brand_voice'
-            elif named_job and source['platform'] in ('Instagram','TikTok') and source.get('kind') in ('Video','Image') and not re.search(maker_pattern,original,re.I) and not account_match:
+            elif (named_job and not re.search(maker_pattern,original,re.I)
+                  and not account_match and (source['platform'] in ('Instagram','TikTok')
+                    or (COMPETITOR_INCLUDE_THIRD_PARTY and is_native_source(source) and publication_is_verified(source.get('published_at'))))):
                 # A creator's relevant review/demo is creative inspiration. A lack
                 # of first-party ownership is not evidence that its topic is bad.
                 # Do not turn it into a competitor-owned post or a buying lead.
-                lane='discover'
+                lane='discover' if source['platform'] in ('Instagram','TikTok') else 'competitors'
                 source['match_reason']='A product demonstration in your niche: “'+job[:180]+'”'
                 publisher_basis='third_party_demonstration'
             else:
                 rejections.append({'id':source['id'],'reason':'Competitors requires evidenced first-party publication and a competing product; reviews are excluded.'});continue
         # Resolved stories cannot become leads because the model mistakes a
         # closing discussion question for an unmet need.
-        if lane=='conversations' and not editorial and route_source(source)=='reject':
+        if lane=='conversations' and not (editorial or niche_question or niche_discussion) and route_source(source)=='reject':
             rejections.append({'id':source['id'],'reason':'No current unresolved audience need is evidenced.'});continue
         education=re.search(r'\b(?:masterclass|webinar|tutorial|lesson|course for beginners)\b',source.get('title',''),re.I)
         learning_problem=re.search(r'\b(?:learn|learning|teach|teaching|study|studying|education)\b',project.problem or project.description,re.I)
         if not verified and education and not learning_problem:
             rejections.append({'id':source['id'],'reason':'Broad educational content is not evidence of the product problem.'});continue
         if lane=='reject':rejections.append({'id':source['id'],'reason':'No audience problem or request evidenced.'});continue
-        request_quote=niche_question or evaluation.get('request_quote','')
-        verified_need=(verified and (niche_question is not None or evaluation.get('need_status')=='unresolved') and isinstance(request_quote,str) and len(request_quote)>=12 and request_quote in source.get('title','')+' '+source.get('summary',''))
+        request_quote=niche_question or niche_discussion or evaluation.get('request_quote','')
+        verified_need=(verified and (niche_question or niche_discussion or evaluation.get('need_status')=='unresolved') and isinstance(request_quote,str) and len(request_quote)>=12 and request_quote in source.get('title','')+' '+source.get('summary',''))
         if lane=='conversations' and ((verified and not verified_need) or (not verified and route_source(source)=='reject')):
             rejections.append({'id':source['id'],'reason':'No unresolved audience need is evidenced.'});continue
-        if lane=='conversations' and verified and not niche_question and evaluation.get('policy_version',0)>=15 and evaluation.get('need_type') not in ('software_recommendation','workflow_friction','feature_request'):
+        if lane=='conversations' and verified and not (niche_question or niche_discussion) and evaluation.get('policy_version',0)>=15 and evaluation.get('need_type') not in ('software_recommendation','workflow_friction','feature_request'):
             rejections.append({'id':source['id'],'reason':'Conversations requires an addressable software or workflow need; general outcome advice is excluded.'});continue
         if lane=='conversations' and verified and evaluation.get('policy_version',0)>=15 and evaluation.get('need_type')=='software_recommendation':
-            software_request=re.search(r"\b(?:apps?|software|tools?|trackers?|loggers?|scanners?|dashboards?|extensions?|apis?|bots?|scripts?|plugins?)\b",request_quote,re.I)
+            software_request=re.search(
+                r"\b(?:apps?|software|tools?|trackers?|loggers?|scanners?|dashboards?|extensions?|apis?|bots?|scripts?|plugins?)\b"
+                r"|\bsomething that (?:works for|can|supports)\b.{0,100}\b(?:automated|automation|alerts|backtesting|integrates|imports|exports)\b",
+                request_quote,re.I)
             named_alternative=any(re.search(r'(?<!\w)'+re.escape(name)+r'(?!\w)',request_quote,re.I)
-                                  for name in getattr(project,'competitors',[]) if isinstance(name,str) and len(name.strip())>=3)
+                                  for name in [*getattr(project,'competitors',[]),*accounts.values()] if isinstance(name,str) and len(name.strip())>=3)
             if not software_request and not named_alternative:
                 rejections.append({'id':source['id'],'reason':'The quoted recommendation request does not identify a tool or competing product.'});continue
         # A broader lifestyle interest is useful inspiration at most, not a
         # prospective customer asking for help with this product's job.
         if lane=='conversations' and verified and evaluation.get('relevance',0)<.65:
             rejections.append({'id':source['id'],'reason':'The request concerns a different task; broad audience overlap is not a lead.'});continue
-        if lane=='conversations' and verified and not editorial and route_source({'platform':source['platform'],'title':'','summary':request_quote})!='conversations':
+        if lane=='conversations' and verified and not (editorial or niche_question or niche_discussion) and route_source({'platform':source['platform'],'title':'','summary':request_quote})!='conversations':
             rejections.append({'id':source['id'],'reason':'The quoted evidence is not itself an unresolved request or frustration.'});continue
         if lane=='discover' and source['platform'] not in ('Instagram','TikTok'):
             rejections.append({'id':source['id'],'reason':'For You contains native short-form media; text posts belong in Conversations only when an actual need is evidenced.'});continue
@@ -246,6 +300,8 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
             views=retrieved_video_views(source)
             if views is None or views<MIN_DISCOVERY_VIDEO_VIEWS:
                 rejections.append({'id':source['id'],'reason':'Discover videos require at least 1,000 measured views or plays.'});continue
+        if lane=='competitors' and is_native_source(source) and not has_competitor_engagement(source):
+            rejections.append({'id':source['id'],'reason':'Competitor engagement is too low or could not be verified.'});continue
         source['match_level']=('Direct' if evaluation.get('relevance',0)>=.85 else 'Adjacent' if evaluation.get('relevance',0)>=.65 else 'Related') if verified else 'Related'
         if publisher_basis!='third_party_demonstration':source['match_reason']=evaluation.get('reason','')
         if publisher_basis:source['publisher_basis']=publisher_basis
@@ -266,9 +322,9 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
             # A verified frustration is useful without pretending its author
             # asked for a recommendation. The quoted text decides the signal.
             if verified_need:
-                explicit=bool(re.search(r"\b(?:looking for|need (?:a|an|something)|does anyone|is there|can anyone|how (?:do|can|should) (?:you|i|we)|should (?:i|we)|recommend)\b",request_quote,re.I))
-            source['conversation_signal']={'type':'question' if niche_question else 'request' if explicit else 'problem','quote':quote or ''}
-            source['match_reason']=('A question about your niche: “'+quote+'”') if niche_question else ('They are asking for a solution: “'+quote+'”') if explicit else ('They describe this problem: “'+quote+'”' if quote else '')
+                explicit=bool(re.search(r"\b(?:looking for|need (?:a|an|something)|does anyone|is there|can anyone|who has found something|how (?:do|can|should) (?:you|i|we)|should (?:i|we)|recommend)\b",request_quote,re.I))
+            source['conversation_signal']={'type':'question' if niche_question else 'discussion' if niche_discussion else 'request' if explicit else 'problem','quote':quote or ''}
+            source['match_reason']=('A question about your niche: “'+quote+'”') if niche_question else ('A workflow discussed in your niche: “'+quote+'”') if niche_discussion else ('They are asking for a solution: “'+quote+'”') if explicit else ('They describe this problem: “'+quote+'”' if quote else '')
         specific=len(source.get('matched_terms',[]))
         published=source.get('published_at')
         try:age=(datetime.now(timezone.utc)-datetime.fromisoformat(published.replace('Z','+00:00'))).days if published else None
@@ -300,16 +356,33 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
     chosen=[]
     # Keep independent capacities and source diversity within each lane.
     for lane in ('conversations','discover','competitors'):
-        pool=[s for s in ranked if s['intent']==lane]
+        pool=[s for s in ranked if s['intent']==lane and not (lane=='competitors' and s.get('publisher_basis')=='third_party_demonstration')]
         if lane == 'conversations':
             pool.sort(key=lambda source: source.get('published_at') or '', reverse=True)
         diverse=[]
+        if lane=='conversations':
+            for platform in ('X','Reddit'):
+                diverse.extend([source for source in pool if source['platform']==platform][:MIN_CONVERSATIONS_PER_PLATFORM])
+            diverse.extend(source for source in pool if source not in diverse)
+            chosen.extend(sorted(diverse[:LANE_LIMITS[lane]],key=lambda source:source.get('published_at') or '',reverse=True))
+            continue
         seen=set()
         for source in pool:
             if source['platform'] not in seen:
                 diverse.append(source);seen.add(source['platform'])
         diverse.extend(s for s in pool if s not in diverse)
         chosen.extend(diverse[:LANE_LIMITS[lane]])
+    if COMPETITOR_INCLUDE_THIRD_PARTY:
+        owned=sum(source['intent']=='competitors' for source in chosen)
+        needed=max(0,RELEASE_MINIMUM['competitors']-owned)
+        for_you=[source for source in chosen if source['intent']=='discover']
+        protected={source['url'] for source in for_you[:RELEASE_MINIMUM['discover']]}
+        demos=[source for source in ranked if source.get('publisher_basis')=='third_party_demonstration'
+               and is_native_source(source) and has_competitor_engagement(source) and source['url'] not in protected and publication_is_verified(source.get('published_at'))][:needed]
+        moved={source['url'] for source in demos}
+        chosen=[source for source in chosen if source['url'] not in moved]
+        chosen.extend({**source,'intent':'competitors','competitor':True,
+                       'match_reason':'Third-party reference · '+source.get('match_reason','')} for source in demos)
     for source in chosen:source.pop('_score',None)
     verified=sum(s['intent']=='discover' and s['attention']['status']=='qualified' for s in chosen)
     report={'version':QUALITY_VERSION,'candidates':len(candidates),'accepted':len(chosen),'rejected':rejections,'verified_discovery':verified,'measured_discovery':sum(s['intent']=='discover' and s['attention']['status'] in ('qualified','measured') for s in chosen),
@@ -324,10 +397,10 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
     report['release_minimum']=dict(RELEASE_MINIMUM)
     report['recent_conversation_count']=len(recent_conversations)
     for lane,minimum in RELEASE_MINIMUM.items():
-        count=len(recent_conversations) if lane=='conversations' else lane_counts[lane]
+        count=lane_counts[lane]
         if count<minimum:
             report['launch_ready']=False
-            label='Conversations from the past week' if lane=='conversations' else lane.capitalize()
+            label=lane.capitalize()
             report['blockers'].append(f'{label}: {count} checked results; launch requires {minimum}.')
     media_platforms=set()
     for source in chosen:
@@ -337,10 +410,13 @@ def select_results(project,candidates,require_evaluation=False,native_only=False
     if len(media_platforms)<2:
         report['launch_ready']=False
         report['blockers'].append('For You needs checked Instagram and TikTok media previews.')
-    conversation_platforms={s['platform'] for s in recent_conversations}
-    if not {'Reddit','X'}<=conversation_platforms:
-        report['launch_ready']=False
-        report['blockers'].append('Current audience requests from both Reddit and X have not been established.')
+    conversation_platforms={platform:sum(s['intent']=='conversations' and s['platform']==platform for s in chosen)
+                            for platform in ('Reddit','X')}
+    report['conversation_platform_counts']=conversation_platforms
+    for platform,count in conversation_platforms.items():
+        if count<MIN_CONVERSATIONS_PER_PLATFORM:
+            report['launch_ready']=False
+            report['blockers'].append(f'{platform}: {count} checked conversations; launch requires {MIN_CONVERSATIONS_PER_PLATFORM}.')
     semantic=sum(s.get('semantic_verified',False) for s in chosen)
     if not any(s['intent']=='conversations' for s in chosen):
         report['blockers'].append('No current unresolved audience request passed the checks yet.')

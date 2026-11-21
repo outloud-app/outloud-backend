@@ -356,6 +356,7 @@ def test_native_competitor_needs_first_party_evidence():
     item = source(maker)
     item['summary'] += ' ' + job
     item['evidence'] = {'type': 'original_platform_post'}
+    item['metrics']={'provider':'apify','checked_at':'2026-11-20','score':16,'views':1200,'likes':22}
     item['evaluation'] = {'provider': 'gemini', 'policy_version': 15,
         'checked_at': '2026-11-06', 'intent': 'competitor', 'relevance': .95,
         'evidence_quote': maker, 'competitor_name': 'Technical Analysis Dashboard',
@@ -365,8 +366,8 @@ def test_native_competitor_needs_first_party_evidence():
     assert not select_results(PROJECT, [item], require_evaluation=True, native_only=True)[0]
 
 
-@pytest.mark.parametrize('views,allowed',[(198,False),(605,False),(999,False),(1_000,True),(None,False)])
-def test_inspiration_and_competitor_videos_need_at_least_one_thousand_measured_views(views,allowed):
+@pytest.mark.parametrize('views,allowed',[(198,False),(999,False),(1_000,True),(2_600,True),(3_000,True),(None,False)])
+def test_video_views_floor_depends_on_lane(views,allowed):
  from copy import deepcopy
  for lane in ('creative_reference','competitor'):
     text="We built a chart pattern scanning app that monitors setups automatically."
@@ -381,13 +382,15 @@ def test_inspiration_and_competitor_videos_need_at_least_one_thousand_measured_v
         candidate.update(title='Using chart alerts to step away from my monitor',
                          summary='Using chart alerts to step away from my monitor')
         candidate['evaluation']['evidence_quote']=candidate['title']
-    assert bool(select_results(PROJECT,[deepcopy(candidate)],require_evaluation=True,native_only=True)[0]) is allowed
+    expected=allowed if lane=='creative_reference' else views is not None and views>=3000
+    assert bool(select_results(PROJECT,[deepcopy(candidate)],require_evaluation=True,native_only=True)[0]) is expected
 
 
 def test_local_competitor_review_requires_an_original_maker_quote_and_product_job():
  text="I'm the founder of ChartMate. The app scans charts for candlestick patterns."
  candidate=source(text)
  candidate['evidence']={'type':'original_platform_post'}
+ candidate['metrics']={'provider':'apify','checked_at':'2026-11-20','score':16,'views':1200,'likes':22}
  candidate['evaluation']={'provider':'local_editorial_review','checked_at':'2026-11-20','intent':'competitor',
      'evidence_quote':text,'relevance':.88,'competitor_name':'ChartMate',
      'competitor_publisher_quote':"I'm the founder of ChartMate.",
@@ -404,3 +407,32 @@ def test_general_advice_cannot_be_classified_as_a_software_recommendation():
      'intent':'audience_problem','need_type':'software_recommendation','evidence_quote':quote,
      'request_quote':quote,'need_status':'unresolved','relevance':.90}
  assert not select_results(PROJECT,[item],require_evaluation=True)[0]
+
+
+@pytest.mark.parametrize('platform,kind,metrics,accepted',[
+    ('TikTok','Video',{'views':2600,'likes':100},False),
+    ('TikTok','Video',{'views':42000,'likes':0,'comments':0},False),
+    ('Instagram','Video',{'views':42000,'likes':1},False),
+    ('Instagram','Video',{'views':42000,'likes':18},True),
+    ('X','Post',{'views':20,'likes':12},False),
+    ('X','Post',{'views':1200,'likes':1},False),
+    ('X','Post',{'views':1200,'comments':6},True),
+    ('Reddit','Post',{'score':13},True),
+])
+def test_competitor_engagement_uses_real_platform_metrics(platform,kind,metrics,accepted):
+    from research_quality import has_competitor_engagement
+    source={'platform':platform,'kind':kind,'metrics':{'provider':'apify','checked_at':'2026-11-20',**metrics}}
+    assert has_competitor_engagement(source) is accepted
+    source['metrics'].pop('provider')
+    assert not has_competitor_engagement(source)
+
+
+def test_explicit_request_for_automation_routes_to_conversations():
+    from research_quality import route_source
+
+    post = {
+        'platform': 'X',
+        'title': '',
+        'summary': 'Who has found something that works for automated strategies, with alerts and proper backtesting?',
+    }
+    assert route_source(post) == 'conversations'

@@ -45,7 +45,7 @@ def test_reddit_body_is_separate_and_missing_counts_are_not_invented():
     assert source['summary']==row['selftext']
     assert 'score' not in source['metrics']
     assert not source['evidence']['engagement_verified']
-    assert native.search_input('calorie tracking',platform='Reddit')['timeframe']=='week'
+    assert native.search_input('calorie tracking',platform='Reddit')['timeframe']=='month'
 
 
 def test_query_compiler_groups_phrases_and_rejects_operators():
@@ -197,7 +197,7 @@ def test_provider_error_rows_are_not_reported_as_empty_search():
 def test_current_reddit_adapter_bounds_search_and_preserves_title_only_questions(monkeypatch):
     monkeypatch.setenv('OUTLOUD_REDDIT_COLLECTOR','harshmaur')
     payload=native.search_input('journaling help',platform='Reddit')
-    assert payload['postedAfter']=='7 days' and payload['maxPostsCount']==20
+    assert payload['postedAfter']=='30 days' and payload['maxPostsCount']==20
     assert payload['searchComments'] is False and payload['crawlCommentsPerPost'] is False
     assert native.collector('Reddit')[2]==.10
     row={'dataType':'post','postUrl':'https://www.reddit.com/r/journaling/comments/abc123/question/',
@@ -209,21 +209,110 @@ def test_current_reddit_adapter_bounds_search_and_preserves_title_only_questions
     assert native.normalize([{**row,'dataType':'community'}],'Reddit')==[]
 
 
-def test_short_user_keywords_drive_native_queries_without_paid_planning(monkeypatch):
+def test_grounded_activities_drive_distinct_queries_without_paid_planning(monkeypatch):
     from app import Project
-    p=Project(name='Calorie diary',platform='iOS',status='launched',category='other',
-        description='Record meals and track calorie intake with a daily food diary.',keywords=['habit tracker','calorie diary'])
-    monkeypatch.setattr(native,'authorize',lambda *a:pytest.fail('User-grounded search should not pay for another wording plan'))
-    assert native.queries_for(p,'Reddit')==['calorie diary help','calorie diary recommendation','calorie diary app']
+    import research_retrieval
+    project=Project(name='Meal Diary',platform='iOS',status='launched',category='other',
+        description='Track calorie intake, estimate portion size, and record meals in a food diary.',
+        keywords=['habit tracker','calorie intake','portion size'])
+    monkeypatch.setattr(research_retrieval,'cached_model',lambda p:{'adjacent_topics':['food diary','home workouts']})
+    monkeypatch.setattr(native,'authorize',lambda *args:pytest.fail('Grounded phrases need no paid planning'))
+    assert native.queries_for(project,'Reddit')==['calorie intake','portion size','food diary']
 
 
+def test_query_yield_counts_only_checked_verdicts_and_delivered_conversations():
+    queries=[{'query':'food diary','platform':'Reddit','returned':4,'status':'completed',
+              'source_ids':['hit','off_topic','unchecked','publisher']}]
+    checked=[{'id':'off_topic','evaluation':{'intent':'irrelevant'}}]
+    selected=[{'id':'hit','intent':'conversations'},{'id':'publisher','intent':'competitors'}]
+    assert native.query_yield(queries,checked,selected)==[
+        {'query':'food diary','platform':'Reddit','returned':4,'irrelevant':1,'accepted':1,'status':'completed'}]
 
-def test_named_competitor_guides_distinct_conversation_search(monkeypatch):
-    from app import Project
-    project = Project(name='Invoice desk', platform='Web', status='launched', category='other',
-                      description='Manage invoice reminders for freelancers and track late payments.',
-                      keywords=['invoice reminders'], competitors=['Ledger Desk, Invoice Helper'])
-    monkeypatch.setattr(native, 'authorize', lambda *args: pytest.fail('No paid planning needed'))
-    assert native.queries_for(project, 'Reddit') == [
-        'invoice reminders help', 'Ledger Desk alternative', 'invoice reminders app'
+
+def test_scoped_reddit_queries_use_provider_community_filter(monkeypatch):
+    monkeypatch.setenv('OUTLOUD_REDDIT_COLLECTOR','harshmaur')
+    payload=native.search_input('subreddit:MealPrep self:true "meal logging"',platform='Reddit')
+    assert payload['withinCommunity']=='MealPrep'
+    assert payload['searchTerms']==['self:true "meal logging"']
+    assert payload['searchSort']=='relevance' and payload['searchTime']=='month'
+
+
+def test_quota_failure_from_replaced_credential_does_not_stop_new_account(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+    import time
+
+    monkeypatch.setenv('APIFY_TOKEN', 'old-test-credential')
+    old_fingerprint = native.credential_fingerprint()
+    with sqlite3.connect(tmp_path / 'provider.sqlite3') as db:
+        db.execute('CREATE TABLE media_jobs(key TEXT PRIMARY KEY,run TEXT,rows TEXT,created REAL)')
+        db.execute('INSERT INTO media_jobs VALUES(?,?,?,?)', (
+            native.collector('X')[1] + 'prior', json.dumps({'credential_fingerprint': old_fingerprint}),
+            json.dumps([{'status': 'error', 'error_kind': 'free_tier_limit'}]), time.time()))
+        with pytest.raises(native.ConversationUnavailable, match='quota is exhausted'):
+            native.check_recent_quota(db, 'X')
+        monkeypatch.setenv('APIFY_TOKEN', 'replacement-test-credential')
+        native.check_recent_quota(db, 'X')
+
+
+def test_apidojo_search_stays_bounded_and_uses_native_date_filter(monkeypatch):
+    monkeypatch.setenv('OUTLOUD_X_COLLECTOR', 'apidojo')
+    payload = native.search_input('repair broken alerts', 20)
+    assert payload['maxItems'] == 20
+    assert payload['sort'] == 'Top'
+    assert payload['searchTerms'][0].startswith('repair broken alerts since:')
+
+
+def test_actor_start_retries_only_a_confirmed_concurrency_rejection(monkeypatch):
+    import httpx
+    import native_access
+
+    url = 'https://api.apify.com/v2/acts/test/runs'
+    request = httpx.Request('POST', url)
+    busy = httpx.Response(402, request=request, json={'error': {'type': 'concurrent-runs-limit-exceeded'}})
+    started = httpx.Response(201, request=request, json={'data': {'id': 'test'}})
+    responses = iter([busy, started])
+    delays = []
+    monkeypatch.setattr(native_access.time, 'sleep', delays.append)
+    assert native_access.actor_start(lambda *_: next(responses), url) == {'id': 'test'}
+    assert delays == [2]
+    payment_required = httpx.Response(402, request=request, json={'error': {'type': 'payment-required'}})
+    with pytest.raises(httpx.HTTPStatusError):
+        native_access.actor_start(lambda *_: payment_required, url)
+    assert delays == [2]
+
+
+def test_native_reply_collection_requires_thread_membership_and_keeps_reply_evidence(monkeypatch):
+    root_url = 'https://x.com/ideas/status/12345/'
+    base = {'createdAt': '2026-11-20T12:00:00Z', 'author': {'username': 'tester'}}
+    rows = [
+        {**base, 'id': '12345', 'url': root_url, 'text': 'Can a scanner run on multiple charts?'},
+        {**base, 'id': '12346', 'url': 'https://x.com/tester/status/12346/', 'isReply': True,
+         'conversationId': '12345', 'text': 'Does the scanner support price alerts that work on mobile?'},
+        {**base, 'id': '12347', 'url': 'https://x.com/tester/status/12347/', 'isReply': True,
+         'conversationId': '99999', 'text': 'This reply belongs to an unrelated thread.'},
     ]
+    def cached(key, path, start, **kwargs):
+        assert key.startswith('native-x-raven-thread-v1:')
+        return {}, rows, 0
+    monkeypatch.setattr(native, 'cached_collection', cached)
+    import research_providers
+    monkeypatch.setattr(research_providers, 'remember_public_sources', lambda sources: None)
+
+    [reply] = native.discover_replies(root_url)
+    assert reply['url'] == rows[1]['url']
+    assert reply['summary'] == rows[1]['text']
+    assert reply['thread_context'] == {'url': root_url, 'text': rows[0]['text']}
+    with pytest.raises(ValueError):
+        native.discover_replies('https://example.org/ideas/status/12345/')
+
+
+def test_xquik_uses_a_deeper_bounded_native_search(monkeypatch):
+    monkeypatch.setenv('OUTLOUD_X_COLLECTOR', 'xquik')
+    payload = native.search_input('calorie logging app workflow', 60)
+    assert payload['maxItems'] == 60
+    assert payload['twitterContent'].startswith('calorie logging app workflow since:')
+    with pytest.raises(ValueError):
+        native.search_input('calorie logging app workflow', 61)
+    with pytest.raises(ValueError):
+        native.search_input('calorie logging app workflow', 60, 'Reddit')

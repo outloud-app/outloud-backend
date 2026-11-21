@@ -122,7 +122,7 @@ def test_matching_brand_account_needs_literal_brand_voice_to_enter_competitors()
  s={'id':'brand','url':'https://www.tiktok.com/@remotemate.app/video/1234567890123/',
   'platform':'TikTok','kind':'Video','author':'remotemate.app','title':text,'summary':text,'published_at':now,
   'evidence':{'type':'original_platform_post'},
-  'metrics':{'views':1800,'provider':'fixture','checked_at':now},
+  'metrics':{'views':3500,'likes':20,'provider':'fixture','checked_at':now},
   'evaluation':{'provider':'gemini','policy_version':15,'checked_at':now,'intent':'competitor','relevance':.9,
   'evidence_quote':text,'competitor_name':'RemoteMate','competitor_job_quote':'RemoteMate controls smart televisions.',
   'competitor_publisher_quote':'The download link is in our profile.'}}
@@ -183,3 +183,70 @@ def test_legacy_profile_can_research_without_inventing_capabilities_or_weakening
  assert p.competitors==[]
  assert 'automated' not in p.description
  assert fields['description']=='An invoice reminder tool'
+
+
+def test_native_research_publishes_checked_cards_while_another_collector_runs(monkeypatch):
+    from threading import Event
+
+    import competitor_accounts
+    import live_discovery
+    import native_access
+    import research_retrieval
+    import research_routing
+
+    monkeypatch.setenv('OUTLOUD_RETRIEVAL_MODE', 'native')
+    monkeypatch.setenv('OUTLOUD_RESEARCH_CACHE_ONLY', '0')
+    monkeypatch.setenv('OUTLOUD_MEDIA_SEARCH_ALLOWED', '1')
+    monkeypatch.setenv('OUTLOUD_CONVERSATION_START_ALLOWED', '0')
+    now = datetime.now(timezone.utc).isoformat()
+    quote = 'Here is how a phone replaces a lost television remote.'
+    post = {
+        'id': 'native-demo', 'platform': 'Instagram', 'url': 'https://www.instagram.com/reel/demo/',
+        'kind': 'Video', 'title': 'Remote control demo', 'summary': quote, 'author': 'creator',
+        'published_at': now, 'section': 'discover', 'competitor': False,
+        'metrics': {'provider': 'apify', 'checked_at': now, 'views': 12000},
+        'evidence': {'type': 'original_platform_post'},
+        'media': {'poster': 'https://example.com/cover.jpg'},
+    }
+    verdict = {'provider': 'gemini', 'checked_at': now, 'intent': 'creative_reference',
+               'relevance': .9, 'evidence_quote': quote}
+    appeared = Event()
+    slow_collector_finished = Event()
+    snapshots = []
+
+    def collect(phrases, limit, wait, platform, keyword):
+        if platform == 'Instagram':
+            return [post.copy()]
+        if appeared.wait(timeout=3):
+            slow_collector_finished.set()
+        return []
+
+    def publish(snapshot):
+        snapshots.append(snapshot)
+        if any(source['id'] == post['id'] for source in snapshot['discover']):
+            appeared.set()
+
+    monkeypatch.setattr(native_access, 'require', lambda: None)
+    monkeypatch.setattr(providers, 'configuration', lambda: {'enabled': True, 'evaluation': True})
+    monkeypatch.setattr(providers, 'remembered_candidates', lambda project: [])
+    monkeypatch.setattr(providers, 'cached_evaluations', lambda project, sources: [])
+    monkeypatch.setattr(providers, 'search_brief', lambda project: {})
+    monkeypatch.setattr(providers, 'native_search_terms', lambda project: {})
+    monkeypatch.setattr(research_routing, 'media_plan', lambda *args: [
+        {'platform': platform, 'lane': 'discover', 'phrases': ['tv remote']}
+        for platform in ('TikTok', 'Instagram')
+    ])
+    monkeypatch.setattr(providers, 'discover_native_media', collect)
+    monkeypatch.setattr(providers, 'evaluate', lambda project, sources, **kwargs: {
+        source['id']: verdict for source in sources
+    })
+    monkeypatch.setattr(providers, 'enrich_media', lambda sources: (sources, []))
+    monkeypatch.setattr(providers, 'remember_public_sources', lambda sources: None)
+    monkeypatch.setattr(research_retrieval, 'shortlist', lambda project, sources: (sources, {}))
+    monkeypatch.setattr(competitor_accounts, 'collect_for_project', lambda project: ([], {}))
+
+    result = live_discovery.research_live(product(), on_progress=publish)
+
+    assert slow_collector_finished.is_set()
+    assert any(snapshot['discover'] for snapshot in snapshots)
+    assert [source['id'] for source in result['discover']] == [post['id']]

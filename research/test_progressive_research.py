@@ -59,3 +59,22 @@ def test_reopening_persisted_workspace_does_not_start_research(tmp_path,monkeypa
   with TestClient(module.app,headers=HEADERS) as stranger:
    stranger.post('/session')
    assert stranger.post(f'/projects/{identifier}/stream').status_code==404
+
+
+
+def test_cached_collection_diagnostics_include_a_lane_for_desktop_clients():
+    from app import preserve_research_diagnostics
+
+    entries = [
+        {'platform': 'X', 'returned': 4, 'status': 'completed'},
+        {'platform': 'Instagram', 'lane': 'competitors', 'returned': 15}
+    ]
+    report = {}
+    preserve_research_diagnostics(report, {
+        'quality_report': {'retrieval': {'native_collections': entries}}
+    })
+
+    assert report['retrieval']['native_collections'] == [
+        {**entries[0], 'lane': 'unknown'}, entries[1]
+    ]
+    assert 'lane' not in entries[0]

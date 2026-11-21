@@ -12,6 +12,24 @@ class NativeCapacityUnavailable(NativeAccessUnavailable):pass
 CAPACITY_MESSAGE='Apify has reached its monthly account allowance. Saved results are still available.'
 
 
+def actor_start(post, url, **kwargs):
+    """Retry explicit concurrency rejections without reserving or starting a second job."""
+    delays=(2, 4, 8, 16, 0)
+    for delay in delays:
+        response=post(url,**kwargs)
+        if not delay or response.status_code!=402:
+            break
+        try:
+            error_type=(response.json().get('error') or {}).get('type')
+        except (AttributeError, ValueError):
+            break
+        if error_type!='concurrent-runs-limit-exceeded':
+            break
+        time.sleep(delay)
+    raise_for_actor_start(response)
+    return response.json()['data']
+
+
 def raise_for_actor_start(response):
     """A provider-wide cap applies across actors, so stop reserving at each adapter."""
     if response.status_code==403:

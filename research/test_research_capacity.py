@@ -2,7 +2,7 @@
 from datetime import datetime,timezone,timedelta
 from types import SimpleNamespace
 import pytest
-from research_quality import select_results,LANE_LIMITS
+from research_quality import select_results,LANE_LIMITS,MAX_RESULTS
 from research_retrieval import retrieval_queries,shortlist,save_model
 from live_discovery import fresh_query
 from app import Project
@@ -24,11 +24,11 @@ def candidate(lane,index=0,days=0):
 
 def test_lanes_have_independent_capacity_instead_of_shared_fifteen():
     project=SimpleNamespace(problem='Avoid missing important tasks.',description='A task organizer.')
-    sources=[candidate(lane,i) for lane in LANE_LIMITS for i in range(35)]
+    sources=[candidate(lane,i) for lane in LANE_LIMITS for i in range(LANE_LIMITS[lane]+5)]
     selected,report=select_results(project,sources,require_evaluation=True)
     assert report['lane_counts']==LANE_LIMITS
-    assert len(selected)==60
-    assert len({s['url'] for s in selected})==60
+    assert len(selected)==MAX_RESULTS
+    assert len({s['url'] for s in selected})==MAX_RESULTS
     # Returned sources must be real inputs; targets cannot manufacture filler.
     small,_=select_results(project,[candidate('discover')],require_evaluation=True)
     assert len(small)==1

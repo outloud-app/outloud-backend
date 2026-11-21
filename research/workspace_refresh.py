@@ -10,8 +10,8 @@ from research_providers import cached_evaluations, remembered_candidates
 from research_quality import select_results,MAX_RESULTS,LANE_LIMITS,is_native_source
 
 
-def refresh(project, snapshot, candidates=None, previous_snapshot=None, native_only=False):
-    previous=snapshot.get('discover',[])+snapshot.get('conversations',[])
+def refresh(project, snapshot, candidates=None, previous_snapshot=None, native_only=False, *, history=()):
+    previous=snapshot.get('discover',[])+snapshot.get('conversations',[])+list(history)
     # The snapshot belongs to this exact project; the public corpus never carries
     # somebody else's verdict. Original text changes invalidate cached decisions.
     corpus=remembered_candidates(project,cached_only=True) if candidates is None else candidates
@@ -84,6 +84,29 @@ def coverage(candidates, checked, selected):
     return result
 
 
+def archived(db, project_id, owner, project):
+    """Read the owner's archive only when the exact current brief has checked the original."""
+    import json
+    from research_retrieval import connect
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='reference_history'").fetchone():return []
+    rows=db.execute('SELECT h.data FROM reference_history h JOIN projects p ON p.id=h.project_id '
+                    'WHERE h.project_id=? AND p.owner=?',(project_id,owner)).fetchall()
+    records=[json.loads(row[0]) for row in rows]
+    if not records:return []
+    current={}
+    with connect() as corpus:
+        if corpus.execute("SELECT 1 FROM sqlite_master WHERE name='public_sources'").fetchone():
+            for index in range(0,len(records),100):
+                urls=[source['url'] for source in records[index:index+100]]
+                for url,data in corpus.execute('SELECT url,data FROM public_sources WHERE url IN ('+
+                                               ','.join('?' for _ in urls)+')',urls):
+                    source=json.loads(data)
+                    current[url]=(source.get('title'),source.get('summary'))
+    unchanged=[source for source in records if current.get(source['url'],(source.get('title'),source.get('summary')))
+               ==(source.get('title'),source.get('summary'))]
+    return cached_evaluations(project,unchanged)
+
+
 def archive(db,project_id,snapshot):
     """Owner-scoped history survives expiration from the fresh recommendations."""
     import json
@@ -121,9 +144,11 @@ def publish_saved(limit=20):
                 continue
             meta=db.execute('SELECT data FROM metadata_cache WHERE url=?',(project.url,)).fetchone() if project.url else None
         project=research_project(project,json.loads(meta['data']) if meta else {})
+        with app.connect() as db:
+            history=archived(db,row['id'],current['owner'],project)
         key=hashlib.sha256((current['owner']+str(app.SEARCH_VERSION)+cache_key(project)+provider_cache_signature()).encode()).hexdigest()
         with app.research_lock(key):
-            updated=refresh(project,snapshot)
+            updated=refresh(project,snapshot,history=history)
             with app.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 changed=db.execute('UPDATE projects SET results=? WHERE id=? AND data=? AND results=?',

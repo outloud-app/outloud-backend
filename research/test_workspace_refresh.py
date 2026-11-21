@@ -106,7 +106,7 @@ def test_worker_does_not_overwrite_concurrent_project_edit(tmp_path,monkeypatch)
     with app.connect() as db:
         db.execute('INSERT INTO projects(id,owner,data,results,created) VALUES(?,?,?,?,?)',
                    ('project','owner',json.dumps(p.model_dump()),json.dumps(snapshot),1))
-    def concurrent_edit(project,results):
+    def concurrent_edit(project,results,**kwargs):
         with app.connect() as db:
             db.execute('UPDATE projects SET data=? WHERE id=?',(json.dumps({**p.model_dump(),'name':'Edited'}),'project'))
         return workspace()
