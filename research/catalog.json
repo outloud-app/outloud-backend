@@ -1,0 +1,585 @@
+[
+  {
+    "id": "habits-1",
+    "platform": "Web",
+    "kind": "Article",
+    "title": "Make restarting easier than giving up.",
+    "author": "James Clear",
+    "url": "https://jamesclear.com/never-miss-twice",
+    "categories": [
+      "habits",
+      "fitness"
+    ],
+    "summary": "An editorial reference about returning to a habit after a missed day. Open the original to study the framing.",
+    "keywords": [
+      "habit",
+      "habits",
+      "streak",
+      "restart",
+      "missed",
+      "consistency"
+    ],
+    "competitor": false,
+    "section": "discover",
+    "tone": "cream"
+  },
+  {
+    "id": "habits-2",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "How Headspace talks about everyday wellbeing.",
+    "author": "Headspace",
+    "url": "https://www.instagram.com/headspace/",
+    "categories": [
+      "habits"
+    ],
+    "summary": "A related brand account to inspect for its language and visual approach. This is an account reference, not a retrieved post.",
+    "keywords": [
+      "meditation",
+      "calm",
+      "mindfulness",
+      "habits",
+      "wellbeing"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "orange"
+  },
+  {
+    "id": "habits-3",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "A calmer approach to showing up.",
+    "author": "Calm",
+    "url": "https://www.instagram.com/calm/",
+    "categories": [
+      "habits"
+    ],
+    "summary": "Explore the public brand account. Consider whether its audience overlaps with yours before treating it as a competitor.",
+    "keywords": [
+      "meditation",
+      "sleep",
+      "anxiety",
+      "habits",
+      "calm"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "lilac"
+  },
+  {
+    "id": "habits-4",
+    "platform": "TikTok",
+    "kind": "Profile",
+    "title": "Turn a daily action into a recurring story.",
+    "author": "Duolingo",
+    "url": "https://www.tiktok.com/@duolingo",
+    "categories": [
+      "habits",
+      "learning"
+    ],
+    "summary": "A public account reference for studying recurring characters and a daily-use product. Open TikTok to see the actual videos.",
+    "keywords": [
+      "learning",
+      "daily",
+      "habit",
+      "streak",
+      "language"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "mint"
+  },
+  {
+    "id": "habits-5",
+    "platform": "Web",
+    "kind": "Article",
+    "title": "Make the first step small.",
+    "author": "James Clear",
+    "url": "https://jamesclear.com/two-minute-rule",
+    "categories": [
+      "habits",
+      "fitness",
+      "learning"
+    ],
+    "summary": "An editorial reference on reducing the friction of starting. Useful for studying how a familiar problem is explained.",
+    "keywords": [
+      "habit",
+      "habits",
+      "start",
+      "small",
+      "consistency",
+      "friction"
+    ],
+    "competitor": false,
+    "section": "discover",
+    "tone": "cream"
+  },
+  {
+    "id": "habits-6",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "Habit trackers work until I miss one day.",
+    "author": "r/getdisciplined",
+    "url": "https://www.reddit.com/r/getdisciplined/comments/1s0um3d/habit_trackers_always_work_for_me_until_i_miss/",
+    "categories": [
+      "habits"
+    ],
+    "summary": "A discussion about losing consistency after a missed habit. Read the original thread for the full context.",
+    "keywords": [
+      "habit",
+      "tracker",
+      "streak",
+      "miss",
+      "consistency"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "habits-7",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "How do you stop the all-or-nothing spiral?",
+    "author": "r/getdisciplined",
+    "url": "https://www.reddit.com/r/getdisciplined/comments/1qdnpp3/i_can_start_habits_but_i_cannot_keep_them_once_i/",
+    "categories": [
+      "habits"
+    ],
+    "summary": "A discussion about restarting after a break and finding a sustainable routine.",
+    "keywords": [
+      "habit",
+      "habits",
+      "restart",
+      "missed",
+      "routine"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "habits-8",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "Does missing two days make you lose momentum?",
+    "author": "r/getdisciplined",
+    "url": "https://www.reddit.com/r/getdisciplined/comments/1vtq52g/does_anyone_else_lose_momentum_after_missing_a/",
+    "categories": [
+      "habits"
+    ],
+    "summary": "People discuss what happens after a break in their routine. Open the thread before joining in.",
+    "keywords": [
+      "habit",
+      "consistency",
+      "routine",
+      "motivation",
+      "missed"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "habits-9",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "How do you stay consistent after missing a day?",
+    "author": "r/getdisciplined",
+    "url": "https://www.reddit.com/r/getdisciplined/comments/1s0k3wi/how_do_you_stay_consistent_after_missing_one_day/",
+    "categories": [
+      "habits"
+    ],
+    "summary": "A relevant question for a product that helps people return to their habits.",
+    "keywords": [
+      "habit",
+      "streak",
+      "consistent",
+      "missed",
+      "tracker"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "dev-1",
+    "platform": "X",
+    "kind": "Discussion",
+    "title": "An app is live. How do you reach its audience?",
+    "author": "@mikeandemina",
+    "url": "https://x.com/mikeandemina/status/2116875144652100030",
+    "categories": [
+      "developer"
+    ],
+    "summary": "A founder asks for help marketing a newly launched app. This is a research lead, not an invitation to send a sales pitch.",
+    "keywords": [
+      "marketing",
+      "app",
+      "launch",
+      "users",
+      "audience",
+      "distribution"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "dev-2",
+    "platform": "X",
+    "kind": "Discussion",
+    "title": "Marketing an app when time is limited.",
+    "author": "@AviniLimited",
+    "url": "https://x.com/AviniLimited/status/2116711596906999887",
+    "categories": [
+      "developer"
+    ],
+    "summary": "A builder describes the ongoing work of marketing an app. Read their situation before replying.",
+    "keywords": [
+      "marketing",
+      "time",
+      "content",
+      "developer",
+      "app"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "dev-3",
+    "platform": "X",
+    "kind": "Discussion",
+    "title": "A working website with no users.",
+    "author": "@PatOnTheCode",
+    "url": "https://x.com/PatOnTheCode/status/2116857037175107758",
+    "categories": [
+      "developer"
+    ],
+    "summary": "A developer describes closing a functional project that did not find users.",
+    "keywords": [
+      "software",
+      "app",
+      "users",
+      "developer",
+      "distribution",
+      "launch"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "dev-4",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "Shipped a first beta. What comes next?",
+    "author": "r/AppBusiness",
+    "url": "https://www.reddit.com/r/AppBusiness/comments/1x4z1q2/finally_shipped_my_first_app_beta_now_what_how_do/",
+    "categories": [
+      "developer",
+      "learning"
+    ],
+    "summary": "An app maker asks about the next steps after a beta launch.",
+    "keywords": [
+      "study",
+      "launch",
+      "beta",
+      "app",
+      "marketing"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "dev-5",
+    "platform": "Web",
+    "kind": "Article",
+    "title": "One month of marketing, documented.",
+    "author": "Jordan Morgan",
+    "url": "https://www.swiftjectivec.com/a-month-of-marketing-recap/",
+    "categories": [
+      "developer"
+    ],
+    "summary": "A developer\u2019s own account of marketing work. Study the concrete activities rather than assume the same outcomes.",
+    "keywords": [
+      "developer",
+      "app",
+      "marketing",
+      "distribution"
+    ],
+    "competitor": false,
+    "section": "discover",
+    "tone": "cream"
+  },
+  {
+    "id": "dev-6",
+    "platform": "X",
+    "kind": "Profile",
+    "title": "How Linear presents product updates.",
+    "author": "Linear",
+    "url": "https://x.com/linear",
+    "categories": [
+      "developer"
+    ],
+    "summary": "A product account reference. Open the profile to inspect actual announcements and how they demonstrate changes.",
+    "keywords": [
+      "software",
+      "developer",
+      "tools",
+      "project",
+      "workflow"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "lilac"
+  },
+  {
+    "id": "dev-7",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "How Notion presents a workspace.",
+    "author": "Notion",
+    "url": "https://www.instagram.com/notionhq/",
+    "categories": [
+      "developer"
+    ],
+    "summary": "A brand account to study for product demonstrations and use-case framing.",
+    "keywords": [
+      "software",
+      "workspace",
+      "productivity",
+      "tools"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "cream"
+  },
+  {
+    "id": "fitness-1",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "A fitness community built around activity.",
+    "author": "Strava",
+    "url": "https://www.instagram.com/strava/",
+    "categories": [
+      "fitness"
+    ],
+    "summary": "An account reference for studying how a fitness product talks to active people.",
+    "keywords": [
+      "workout",
+      "running",
+      "fitness",
+      "exercise",
+      "gym",
+      "tracking"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "orange"
+  },
+  {
+    "id": "fitness-2",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "How Hevy shows a workout-tracking product.",
+    "author": "Hevy",
+    "url": "https://www.instagram.com/hevyapp/",
+    "categories": [
+      "fitness"
+    ],
+    "summary": "A related app account. Open the original account for its current posts.",
+    "keywords": [
+      "workout",
+      "strength",
+      "fitness",
+      "exercise",
+      "gym",
+      "tracking"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "lilac"
+  },
+  {
+    "id": "fitness-3",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "Which workout tracker keeps you coming back?",
+    "author": "r/workout",
+    "url": "https://www.reddit.com/r/workout/comments/1t11z4m/whats_your_goto_app_for_tracking_workouts_and_the/",
+    "categories": [
+      "fitness"
+    ],
+    "summary": "People compare workout trackers and the features that make them stay.",
+    "keywords": [
+      "workout",
+      "tracker",
+      "fitness",
+      "exercise",
+      "gym",
+      "tracking"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "fitness-4",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "Why do workout apps feel unintuitive?",
+    "author": "r/workout",
+    "url": "https://www.reddit.com/r/workout/comments/1q4p3fy/which_app_do_you_use_for_tracking_workouts/",
+    "categories": [
+      "fitness"
+    ],
+    "summary": "A discussion comparing tracking apps, including frustrations with their interfaces.",
+    "keywords": [
+      "workout",
+      "tracker",
+      "fitness",
+      "exercise",
+      "gym",
+      "tracking"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "finance-1",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "How YNAB explains a budgeting habit.",
+    "author": "YNAB",
+    "url": "https://www.instagram.com/ynabofficial/",
+    "categories": [
+      "finance"
+    ],
+    "summary": "A related product account for reviewing budgeting language and visual examples.",
+    "keywords": [
+      "budget",
+      "spending",
+      "finance",
+      "money",
+      "savings"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "mint"
+  },
+  {
+    "id": "finance-2",
+    "platform": "Web",
+    "kind": "Profile",
+    "title": "A budgeting product\u2019s own positioning.",
+    "author": "YNAB",
+    "url": "https://www.ynab.com/",
+    "categories": [
+      "finance"
+    ],
+    "summary": "An original product page to inspect for its positioning, audience and explanation of budgeting.",
+    "keywords": [
+      "budget",
+      "spending",
+      "finance",
+      "money",
+      "savings"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "cream"
+  },
+  {
+    "id": "finance-3",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "Looking for a personal finance tracker.",
+    "author": "r/personalfinance",
+    "url": "https://www.reddit.com/r/personalfinance/comments/1vrrwtr/personal_finance_budget_app/",
+    "categories": [
+      "finance"
+    ],
+    "summary": "Someone asks for recommendations for tracking personal finances.",
+    "keywords": [
+      "budget",
+      "spending",
+      "finance",
+      "money",
+      "savings"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "finance-4",
+    "platform": "Reddit",
+    "kind": "Discussion",
+    "title": "How do you choose a budgeting app?",
+    "author": "r/personalfinance",
+    "url": "https://www.reddit.com/r/personalfinance/comments/1rfgqlk/how_to_find_a_good_budgeting_app_to_track_and/",
+    "categories": [
+      "finance"
+    ],
+    "summary": "A discussion about categorising finances and finding a suitable app.",
+    "keywords": [
+      "budget",
+      "spending",
+      "finance",
+      "money",
+      "savings"
+    ],
+    "competitor": false,
+    "section": "conversations",
+    "tone": "mint"
+  },
+  {
+    "id": "learning-1",
+    "platform": "Instagram",
+    "kind": "Profile",
+    "title": "A learning product with a recognisable character.",
+    "author": "Duolingo",
+    "url": "https://www.instagram.com/duolingo/",
+    "categories": [
+      "learning"
+    ],
+    "summary": "Open the public brand account to study how it presents a language-learning product.",
+    "keywords": [
+      "learning",
+      "language",
+      "study",
+      "streak",
+      "daily"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "orange"
+  },
+  {
+    "id": "learning-2",
+    "platform": "Web",
+    "kind": "Profile",
+    "title": "How Anki explains spaced repetition.",
+    "author": "Anki",
+    "url": "https://apps.ankiweb.net/",
+    "categories": [
+      "learning"
+    ],
+    "summary": "A related learning product\u2019s own page. Compare its explanation of the problem it solves with your own.",
+    "keywords": [
+      "flashcards",
+      "study",
+      "repetition",
+      "learning",
+      "memory"
+    ],
+    "competitor": true,
+    "section": "discover",
+    "tone": "cream"
+  }
+]

@@ -1,0 +1,9 @@
+.venv/
+.wrangler/
+.dev.vars*
+__pycache__/
+.pytest_cache/
+.env*
+.venv-workers/
+python_modules/
+src/vendor/

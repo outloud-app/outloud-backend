@@ -1,0 +1,19 @@
+name = "outloud-license-sandbox"
+main = "src/main.py"
+compatibility_date = "2026-10-30"
+compatibility_flags = ["python_workers"]
+account_id = "535b814e25e0ef791e219878f2d1825c"
+[vars]
+PAYMENT_MODE = "test"
+SITE_URL = "https://tryoutloud.pages.dev"
+[[d1_databases]]
+binding = "DB"
+database_name = "outloud-licenses-sandbox"
+database_id = "35622ebc-86af-45b4-9ad2-df8736d1e0c7"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+[observability.logs]
+enabled = true
+invocation_logs = true

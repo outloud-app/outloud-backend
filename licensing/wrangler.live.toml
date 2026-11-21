@@ -1,0 +1,19 @@
+name = "outloud-license-api"
+main = "src/main.py"
+compatibility_date = "2026-10-30"
+compatibility_flags = ["python_workers"]
+account_id = "535b814e25e0ef791e219878f2d1825c"
+[vars]
+PAYMENT_MODE = "live"
+SITE_URL = "https://tryoutloud.pages.dev"
+[[d1_databases]]
+binding = "DB"
+database_name = "outloud-licenses-live"
+database_id = "a929b4c3-2f36-4aaf-aa52-a4d3ddb9dcd2"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+[observability.logs]
+enabled = true
+invocation_logs = true

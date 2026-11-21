@@ -1,0 +1,10 @@
+[project]
+name = "outloud-licensing"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["fastapi>=0.135,<1", "httpx>=0.28,<1"]
+[dependency-groups]
+dev = ["workers-py", "workers-runtime-sdk", "pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

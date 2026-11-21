@@ -1,0 +1,361 @@
+{
+  "habits": [
+    "habit",
+    "habits",
+    "streak",
+    "streaks",
+    "routine",
+    "routines",
+    "consistency",
+    "meditation",
+    "mindfulness",
+    "wellbeing"
+  ],
+  "art-design": [
+    "art",
+    "artist",
+    "artists",
+    "drawing",
+    "painting",
+    "illustration",
+    "creative",
+    "branding"
+  ],
+  "automotive": [
+    "vehicle",
+    "vehicles",
+    "automotive",
+    "car",
+    "cars",
+    "mechanic",
+    "garage",
+    "mileage"
+  ],
+  "beauty": [
+    "beauty",
+    "makeup",
+    "skincare",
+    "salon",
+    "cosmetics",
+    "hairstyle"
+  ],
+  "books": [
+    "book",
+    "books",
+    "reading",
+    "reader",
+    "literature",
+    "library",
+    "ebook",
+    "ebooks"
+  ],
+  "business": [
+    "business",
+    "crm",
+    "invoicing",
+    "invoices",
+    "enterprise",
+    "customers",
+    "sales",
+    "inventory"
+  ],
+  "comics": [
+    "comic",
+    "comics",
+    "manga",
+    "webtoon"
+  ],
+  "communication": [
+    "messaging",
+    "messenger",
+    "calling",
+    "calls",
+    "email",
+    "emails",
+    "sms",
+    "voicemail"
+  ],
+  "dating": [
+    "dating",
+    "matchmaking",
+    "romance",
+    "singles"
+  ],
+  "developer": [
+    "developer",
+    "developers",
+    "coding",
+    "debugging",
+    "programming",
+    "saas",
+    "marketing",
+    "distribution",
+    "repository",
+    "api"
+  ],
+  "learning": [
+    "study",
+    "studying",
+    "learning",
+    "education",
+    "language",
+    "languages",
+    "flashcard",
+    "flashcards",
+    "school",
+    "students",
+    "lessons"
+  ],
+  "entertainment": [
+    "entertainment",
+    "movies",
+    "movie",
+    "streaming",
+    "television",
+    "tv",
+    "cinema"
+  ],
+  "events": [
+    "event",
+    "events",
+    "tickets",
+    "ticket",
+    "concerts",
+    "conference",
+    "meetup"
+  ],
+  "finance": [
+    "budget",
+    "budgeting",
+    "money",
+    "finances",
+    "finance",
+    "expenses",
+    "spending",
+    "subscriptions",
+    "savings",
+    "banking"
+  ],
+  "food-drink": [
+    "food",
+    "meals",
+    "meal",
+    "recipe",
+    "recipes",
+    "cooking",
+    "restaurant",
+    "restaurants",
+    "groceries",
+    "nutrition"
+  ],
+  "games": [
+    "game",
+    "games",
+    "gaming",
+    "gamer",
+    "arcade",
+    "puzzle",
+    "videogames"
+  ],
+  "graphics": [
+    "graphics",
+    "typography",
+    "vector",
+    "vectors",
+    "ui",
+    "ux",
+    "fonts",
+    "prototyping"
+  ],
+  "fitness": [
+    "workout",
+    "workouts",
+    "exercise",
+    "fitness",
+    "calories",
+    "running",
+    "strength",
+    "gym",
+    "training",
+    "steps"
+  ],
+  "home": [
+    "home",
+    "house",
+    "property",
+    "renovation",
+    "furniture",
+    "interior",
+    "mortgage"
+  ],
+  "kids": [
+    "kids",
+    "children",
+    "child",
+    "family",
+    "families"
+  ],
+  "libraries": [
+    "sdk",
+    "libraries",
+    "demos",
+    "packages",
+    "dependencies"
+  ],
+  "lifestyle": [
+    "lifestyle",
+    "wardrobe",
+    "journaling",
+    "journal"
+  ],
+  "medical": [
+    "medical",
+    "medicine",
+    "healthcare",
+    "doctor",
+    "doctors",
+    "patient",
+    "patients",
+    "prescriptions",
+    "symptoms",
+    "clinical"
+  ],
+  "music": [
+    "music",
+    "audio",
+    "songs",
+    "song",
+    "sound",
+    "podcast",
+    "podcasts",
+    "instrument",
+    "instruments"
+  ],
+  "navigation": [
+    "map",
+    "maps",
+    "navigation",
+    "gps",
+    "directions",
+    "route",
+    "routes",
+    "traffic"
+  ],
+  "news": [
+    "news",
+    "journalism",
+    "newspaper",
+    "headlines",
+    "magazines"
+  ],
+  "parenting": [
+    "parenting",
+    "parents",
+    "pregnancy",
+    "baby",
+    "babies",
+    "toddler",
+    "newborn"
+  ],
+  "personalization": [
+    "personalization",
+    "wallpapers",
+    "wallpaper",
+    "themes",
+    "ringtones",
+    "widgets"
+  ],
+  "photography": [
+    "photography",
+    "photo",
+    "photos",
+    "camera",
+    "pictures",
+    "photographer"
+  ],
+  "productivity": [
+    "productivity",
+    "tasks",
+    "task",
+    "todo",
+    "calendar",
+    "calendars",
+    "notes",
+    "focus",
+    "distractions",
+    "screentime",
+    "screen-time",
+    "blocking",
+    "distraction"
+  ],
+  "shopping": [
+    "shopping",
+    "shop",
+    "stores",
+    "ecommerce",
+    "purchases",
+    "wishlist",
+    "retail"
+  ],
+  "social": [
+    "social",
+    "community",
+    "communities",
+    "friends",
+    "friendship",
+    "groups",
+    "networking",
+    "chat",
+    "chatting"
+  ],
+  "sports": [
+    "sports",
+    "football",
+    "basketball",
+    "soccer",
+    "tennis",
+    "cricket",
+    "rugby",
+    "baseball"
+  ],
+  "travel": [
+    "travel",
+    "flights",
+    "hotels",
+    "tourism",
+    "trip",
+    "trips",
+    "vacation",
+    "itinerary"
+  ],
+  "utilities": [
+    "utility",
+    "utilities",
+    "calculator",
+    "converter",
+    "scanner",
+    "password",
+    "passwords",
+    "storage",
+    "files"
+  ],
+  "video": [
+    "video",
+    "videos",
+    "editing",
+    "editor",
+    "clips",
+    "subtitles",
+    "captions",
+    "reels"
+  ],
+  "weather": [
+    "weather",
+    "forecast",
+    "forecasts",
+    "temperature",
+    "rain",
+    "climate",
+    "storms"
+  ]
+}
